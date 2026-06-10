@@ -1,0 +1,48 @@
+# Local AI agent swarm knowledge graph: Ollama + the swarm-kg service.
+# Works with Docker and Podman (podman compose up -d).
+
+volumes:
+  ollama_data:
+
+networks:
+  swarm_net:
+    driver: bridge
+
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    networks:
+      - swarm_net
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  swarm-kg:
+    build: .
+    container_name: swarm-kg
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - swarm_net
+    ports:
+      - "${PORT:-5678}:5678"
+    environment:
+      PORT: "5678"
+      VAULT_PATH: /vault
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-deepseek-r1:7b}
+    volumes:
+      # Mount your Obsidian vault here. Set VAULT_HOST_PATH in .env.
+      - ${VAULT_HOST_PATH:-./vault}:/vault
