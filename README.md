@@ -7,7 +7,8 @@ context from the IDE and the agents run automatically:
 - **Documenter** — summarises what you're building into a structured note (`vault/code/`)
 - **Researcher** — generates a best-practices/pitfalls note (`vault/research/`).
   Off by default; set `RESEARCHER_ENABLED=true` to turn it on
-- **Linker** — connects new notes to existing ones with `[[wikilinks]]`
+- **Linker** — connects new notes to existing ones with `[[wikilinks]]`,
+  choosing from the ten notes most similar to each new note
 
 This is a TypeScript service — a migration of the original
 [n8n-based implementation](https://github.com/lukewoodcock/utils) into plain
@@ -210,6 +211,14 @@ session logs are never returned. An optional `kind` in the request returns only
 notes of that kind, e.g. `{"query": "what's left to do?", "kind": "todo"}`
 recalls todos (open ones carry `status: open` until you change it in Obsidian).
 
+The Linker uses the same search to pick link candidates: each new note's title
+and body are the query, and the ten best hits (never the note itself) are the
+only notes the model may link it to. Links to anything else are dropped, and
+with nothing to link to the model isn't asked at all. The new note doesn't
+need to be indexed for this, so a run indexes its notes once, after the
+Linker. Since research notes are never search hits, they aren't link
+candidates either.
+
 The vectors live in `.swarm-kg/index.json` inside the vault (Obsidian hides
 dot folders), with a content hash per note. The notes stay the only source of
 truth: on startup the service indexes notes that are missing or changed (seed
@@ -225,6 +234,75 @@ npm run build && npm run reindex   # POSTs /webhook/knowledge-graph/reindex
 `http://127.0.0.1:5678`). With the service stopped, delete `.swarm-kg/` and
 start it instead. Changing `OLLAMA_EMBED_MODEL` re-embeds every note on the
 next start.
+
+### Open a note and walk its links
+
+A note's name is its file name without `.md`, as a `[[wikilink]]` names it
+and as search returns it.
+
+```bash
+curl -s http://localhost:5678/webhook/knowledge-graph/notes/cache-decision | jq .
+```
+
+```json
+{
+  "name": "cache-decision",
+  "path": "memos/cache-decision.md",
+  "frontmatter": { "title": "Cache invalidation decision", "kind": "decision", "project": "project-b" },
+  "content": "## Summary\nWe chose write-through caching."
+}
+```
+
+`content` is the note's markdown after its frontmatter. The related endpoint
+lists the notes a note links to (`outgoing`) and the notes that link to it
+(`incoming`), each as `{name, path, title, kind, project}`. Session logs,
+links to notes that don't exist, and self-links are left out.
+
+```bash
+curl -s http://localhost:5678/webhook/knowledge-graph/notes/cache-decision/related | jq .
+# { "name": "cache-decision", "outgoing": [...], "incoming": [...] }
+```
+
+An unknown name is a 404: `{"error": "No note named \"…\""}`. Names are
+matched against the vault's own notes (dot folders excluded), so a name can't
+reach a file outside them.
+
+### Recall over MCP
+
+`dist/mcp/server.js` is an [MCP](https://modelcontextprotocol.io) server that
+gives any agent recall over the graph. It speaks MCP over stdio only, so it
+has no network listener of its own; each tool calls the service's HTTP API:
+
+| Tool | Calls |
+|------|-------|
+| `search_notes(query, limit = 5, kind?)` | `POST /webhook/knowledge-graph/search` |
+| `get_note(name)` | `GET /webhook/knowledge-graph/notes/:name` |
+| `related_notes(name)` | `GET /webhook/knowledge-graph/notes/:name/related` |
+
+Each tool returns the service's JSON reply as text. Every tool description
+tells the agent that note contents are reference material, not instructions.
+A missing note, or the service being down, comes back as a tool error the
+agent can read (`The swarm-kg service is not reachable at … Is it running?`),
+never as a crash.
+
+Add it to a project's `.mcp.json` (after `npm run build` in this repo):
+
+```json
+{
+  "mcpServers": {
+    "swarm-kg": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/swarm-kg/dist/mcp/server.js"],
+      "env": { "SWARM_KG_SERVICE_URL": "http://127.0.0.1:5678" }
+    }
+  }
+}
+```
+
+Or from the command line:
+`claude mcp add swarm-kg --scope project -e SWARM_KG_SERVICE_URL=http://127.0.0.1:5678 -- node /ABSOLUTE/PATH/TO/swarm-kg/dist/mcp/server.js`.
+Claude Code then names the tools `mcp__swarm-kg__search_notes` and so on.
+`SWARM_KG_SERVICE_URL` defaults to `http://127.0.0.1:5678`.
 
 ### Trigger from Claude Code (Stop hook)
 
@@ -285,7 +363,7 @@ echo '{"hook_event_name":"Stop","stop_hook_active":false,
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 112 tests, <1s, no Docker needed
+npm test             # vitest — 128 tests, a couple of seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -301,15 +379,18 @@ src/
 ├── memos.ts            # memo validation, memo notes and their same-session links
 ├── reindex.ts          # npm run reindex: asks the service to rebuild the index
 ├── vault.ts            # safeTitle, frontmatter parsing and writing, file helpers
+├── graph.ts            # one note by name, and the notes linked to and from it
 ├── agents/
 │   ├── documenter.ts
 │   ├── researcher.ts
 │   └── linker.ts
-└── hook/               # Claude Code Stop hook (dist/hook/stop.js)
-    ├── stop.ts         # entrypoint: stdin → transcript → POSTs
-    ├── transcript.ts   # pure: last turn's prompt + edits from the JSONL
-    ├── payload.ts      # pure: config, skip rules, webhook payloads
-    └── io.ts           # stdin, git diff, fetch (never throw)
+├── hook/               # Claude Code Stop hook (dist/hook/stop.js)
+│   ├── stop.ts         # entrypoint: stdin → transcript → POSTs
+│   ├── transcript.ts   # pure: last turn's prompt + edits from the JSONL
+│   ├── payload.ts      # pure: config, skip rules, webhook payloads
+│   └── io.ts           # stdin, git diff, fetch (never throw)
+└── mcp/
+    └── server.ts       # stdio MCP server for recall (dist/mcp/server.js)
 tests/                  # vitest unit + in-process end-to-end tests
 ```
 
@@ -343,6 +424,7 @@ Behaviour-preserving migration, with a few deliberate fixes:
 - **Partial failure handling** — one agent failing no longer aborts the run
   (`Promise.allSettled`).
 - **Linker path safety** — the linker only writes to notes it just created,
-  so a hallucinated path from the LLM can never touch other files.
+  so a hallucinated path from the LLM can never touch other files, and only
+  links to its candidates, so it never writes a link to a note that doesn't exist.
 - **No URL string-replace hack** — agents are function calls, not HTTP
   round-trips through the workflow engine.

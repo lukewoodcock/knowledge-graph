@@ -8,6 +8,7 @@ import { today, appendNote } from './vault';
 import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
+import { readNote, relatedNotes } from './graph';
 import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
 import { Memo, memoLinks, parseMemos, writeMemos } from './memos';
 
@@ -83,11 +84,12 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
       else errors.push(String(result.reason));
     }
 
-    const linker = await runLinker(notes, ctx.language, ctx.description, cfg);
+    const linker = await runLinker(notes, ctx.language, ctx.description, cfg, index);
 
     // After the Linker, so the indexed content is the note as finally
-    // written. A note that fails to index is still in the vault, and the
-    // next startup sync picks it up.
+    // written (the Linker searches with the note's text, so it doesn't need
+    // the note indexed first). A note that fails to index is still in the
+    // vault, and the next startup sync picks it up.
     try {
       await index.indexNotes(notes.map(n => n.notePath));
     } catch (err) {
@@ -263,6 +265,35 @@ export function createApp(cfg: Config): Express {
       res.json({ query, ...(kind ? { kind } : {}), results });
     } catch (err) {
       res.status(502).json({ error: `Search failed: ${String(err)}` });
+    }
+  });
+
+  // Recall: one note in full, by name.
+  app.get('/webhook/knowledge-graph/notes/:name', async (req, res) => {
+    try {
+      const note = await readNote(cfg.vaultPath, req.params.name);
+      if (!note) {
+        res.status(404).json({ error: `No note named "${req.params.name}"` });
+        return;
+      }
+      res.json(note);
+    } catch (err) {
+      res.status(500).json({ error: `Reading the note failed: ${String(err)}` });
+    }
+  });
+
+  // Recall: the notes a note links to and the notes linking to it, so an
+  // agent can walk the graph from a search hit. Session logs are left out.
+  app.get('/webhook/knowledge-graph/notes/:name/related', async (req, res) => {
+    try {
+      const related = await relatedNotes(cfg.vaultPath, req.params.name);
+      if (!related) {
+        res.status(404).json({ error: `No note named "${req.params.name}"` });
+        return;
+      }
+      res.json(related);
+    } catch (err) {
+      res.status(500).json({ error: `Reading the related notes failed: ${String(err)}` });
     }
   });
 

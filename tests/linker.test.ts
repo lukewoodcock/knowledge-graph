@@ -82,27 +82,22 @@ describe('buildNoteIndex', () => {
 });
 
 describe('filterLinks', () => {
-  const SELF = '/vault/code/2026-10-23_src_auth_jwt.py.md';
-  const LOGS = ['2026-10-23_session_log'];
+  const CANDIDATES = ['jwt-notes', 'docker-setup'];
 
-  test('drops a link from a note to itself', () => {
-    expect(filterLinks(['[[2026-10-23_src_auth_jwt.py]]', '[[other]]'], SELF, LOGS)).toEqual([
-      '[[other]]',
-    ]);
-  });
-
-  test('drops links to session logs', () => {
-    expect(filterLinks(['[[2026-10-23_session_log]]', '[[other]]'], SELF, LOGS)).toEqual([
-      '[[other]]',
-    ]);
+  test('drops links to notes that are not candidates', () => {
+    expect(filterLinks(['[[made-up]]', '[[jwt-notes]]'], CANDIDATES)).toEqual(['[[jwt-notes]]']);
   });
 
   test('matches aliased and heading links by their target', () => {
-    const links = ['[[2026-10-23_src_auth_jwt.py|me]]', '[[2026-10-23_session_log#Notes]]'];
-    expect(filterLinks(links, SELF, LOGS)).toEqual([]);
+    const links = ['[[jwt-notes|JWT]]', '[[docker-setup#Notes]]', '[[made-up|x]]'];
+    expect(filterLinks(links, CANDIDATES)).toEqual(['[[jwt-notes|JWT]]', '[[docker-setup#Notes]]']);
   });
 
-  test('keeps everything else untouched', () => {
-    expect(filterLinks(['[[a]]', '[[b]]'], SELF, LOGS)).toEqual(['[[a]]', '[[b]]']);
+  test('links each target once', () => {
+    expect(filterLinks(['[[jwt-notes]]', '[[jwt-notes|again]]'], CANDIDATES)).toEqual(['[[jwt-notes]]']);
+  });
+
+  test('ignores entries that are not strings', () => {
+    expect(filterLinks([42 as unknown as string, '[[jwt-notes]]'], CANDIDATES)).toEqual(['[[jwt-notes]]']);
   });
 });
