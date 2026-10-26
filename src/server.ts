@@ -25,22 +25,16 @@ function optionalString(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
-async function writeSessionLog(ctx: SwarmContext, cfg: Config): Promise<void> {
-  const logFile = path.join(cfg.vaultPath, 'logs', `${ctx.today}_session_log.md`);
-  const entry = [
-    `## ${new Date().toISOString()}`,
-    '',
-    `- **File:** ${ctx.filePath}`,
-    `- **Language:** ${ctx.language}`,
-    `- **Description:** ${ctx.description}`,
-    '',
-  ].join('\n');
+/** Appends one capture's entry (its `- **Field:** value` lines) to the day's session log. */
+async function writeSessionLog(date: string, lines: string[], cfg: Config): Promise<void> {
+  const logFile = path.join(cfg.vaultPath, 'logs', `${date}_session_log.md`);
+  const entry = [`## ${new Date().toISOString()}`, '', ...lines, ''].join('\n');
 
   // First entry of the day gets frontmatter; later entries append below it.
   const header = [
     '---',
-    `title: "Session Log ${ctx.today}"`,
-    `date: ${ctx.today}`,
+    `title: "Session Log ${date}"`,
+    `date: ${date}`,
     'tags: [log, session]',
     'related: []',
     'source: "orchestrator"',
@@ -69,7 +63,11 @@ const MAX_RUNS = 100;
 
 async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
   try {
-    await writeSessionLog(ctx, cfg);
+    await writeSessionLog(ctx.today, [
+      `- **File:** ${ctx.filePath}`,
+      `- **Language:** ${ctx.language}`,
+      `- **Description:** ${ctx.description}`,
+    ], cfg);
 
     // Documenter and (when on) Researcher run in parallel. allSettled so one
     // agent failing doesn't take down the other's note.
@@ -113,6 +111,7 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
 /** A memo run: no Documenter or Researcher; each memo is written, linked and indexed. */
 async function runMemos(memos: Memo[], date: string, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
   try {
+    await writeSessionLog(date, memos.map(m => `- **Memo:** ${m.kind}: ${m.title}`), cfg);
     const written = await writeMemos(memos, date, cfg);
     const errors: string[] = [];
 

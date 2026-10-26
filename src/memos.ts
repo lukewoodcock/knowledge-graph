@@ -56,7 +56,8 @@ function parseMemo(raw: unknown, i: number): Memo | string[] {
   if (problems.length > 0) return problems;
   return {
     kind: kind!,
-    title: fields.title!,
+    // One line, so it can't break the session log or a heading.
+    title: fields.title!.replace(/\s+/g, ' '),
     body: fields.body!,
     project: fields.project!,
     session: fields.session_id!,

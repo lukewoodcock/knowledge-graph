@@ -317,6 +317,31 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(res.status).toBe(400);
   });
 
+  test('a memo sent while a code capture is running waits its turn in the same queue', async () => {
+    const app = createApp(cfg);
+    mockState.delayMs = 30;
+    const code = await request(app)
+      .post('/webhook/knowledge-graph/trigger')
+      .send({ file_path: 'src/cache.ts', description: 'capture-code', session_id: 'sess-1', project: 'project-a' });
+    const memo = await request(app).post(MEMO_URL).send(MEMO);
+
+    const [, memoRun] = await Promise.all([code, memo].map(r => waitForRun(app, r.body.status_url)));
+
+    // The memo's Linker call comes only after every call of the code capture,
+    // so the memo already sees, and links to, the code note.
+    const owners = mockState.prompts.map(p => (p.includes('capture-code') ? 'code' : 'memo'));
+    expect(owners).toEqual(['code', 'code', 'memo']);
+    expect(memoRun.body.memos[0].links).toHaveLength(1);
+  });
+
+  test("memos are recorded in the day's session log", async () => {
+    const run = await memoAndWait(createApp(cfg), [MEMO, { ...MEMO, kind: 'todo', title: 'Add cache metrics' }]);
+
+    const log = await fs.readFile(path.join(vaultDir, 'logs', `${run.body.session_date}_session_log.md`), 'utf8');
+    expect(log).toContain('- **Memo:** decision: Use write-through caching');
+    expect(log).toContain('- **Memo:** todo: Add cache metrics');
+  });
+
   test('two memos with the same title get separate notes', async () => {
     const run = await memoAndWait(createApp(cfg), [MEMO, { ...MEMO, body: 'Another take.' }]);
 
