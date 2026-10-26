@@ -9,6 +9,7 @@ import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
 import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
+import { Memo, MemoNote, parseMemos, writeMemo } from './memos';
 
 interface WebhookPayload {
   file_path?: string;
@@ -109,6 +110,21 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
   }
 }
 
+/** A memo run: no Documenter or Researcher; each memo is written, linked and indexed. */
+async function runMemos(memos: Memo[], date: string, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
+  try {
+    const written: MemoNote[] = [];
+    for (const memo of memos) written.push(await writeMemo(memo, date, cfg));
+    return {
+      status: 'complete',
+      session_date: date,
+      memos: written.map(w => ({ name: w.name, note_path: w.notePath, kind: w.memo.kind })),
+    };
+  } catch (err) {
+    return { status: 'error', error: String(err) };
+  }
+}
+
 export function createApp(cfg: Config): Express {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
@@ -130,6 +146,25 @@ export function createApp(cfg: Config): Express {
   // so several runs never compete for one local Ollama. runSwarm never
   // rejects, so a failed run can't stall the runs behind it.
   let queue: Promise<void> = Promise.resolve();
+
+  /** Registers a run, queues its work, and returns the 202 body that points at it. */
+  function enqueue(label: string, work: () => Promise<RunResult>) {
+    const runId = randomUUID();
+    runs.set(runId, { status: 'running', run_id: runId });
+    // Map iterates in insertion order, so the first key is the oldest run.
+    if (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value!);
+
+    // Queued runs report 'running' too, so the status contract is unchanged.
+    queue = queue.then(async () => {
+      const started = Date.now();
+      const result = await work();
+      runs.set(runId, { ...result, run_id: runId });
+      const secs = ((Date.now() - started) / 1000).toFixed(1);
+      console.log(`run ${runId} ${result.status} in ${secs}s (${label})`);
+    });
+
+    return { status: 'accepted', run_id: runId, status_url: `/webhook/knowledge-graph/runs/${runId}` };
+  }
 
   app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok' });
@@ -158,25 +193,20 @@ export function createApp(cfg: Config): Express {
       project: optionalString(body.project),
     };
 
-    const runId = randomUUID();
-    runs.set(runId, { status: 'running', run_id: runId });
-    // Map iterates in insertion order, so the first key is the oldest run.
-    if (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value!);
+    res.status(202).json(enqueue(ctx.filePath || ctx.description, () => runSwarm(ctx, cfg, index)));
+  });
 
-    // Queued runs report 'running' too, so the status contract is unchanged.
-    queue = queue.then(async () => {
-      const started = Date.now();
-      const result = await runSwarm(ctx, cfg, index);
-      runs.set(runId, { ...result, run_id: runId });
-      const secs = ((Date.now() - started) / 1000).toFixed(1);
-      console.log(`run ${runId} ${result.status} in ${secs}s (${ctx.filePath || ctx.description})`);
-    });
-
-    res.status(202).json({
-      status: 'accepted',
-      run_id: runId,
-      status_url: `/webhook/knowledge-graph/runs/${runId}`,
-    });
+  // Memos: captures the session's agent already wrote. Same queue and reply
+  // as a code capture; the run writes, links and indexes each memo.
+  app.post('/webhook/knowledge-graph/memo', (req, res) => {
+    const parsed = parseMemos(req.body);
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const { memos } = parsed;
+    const date = today();
+    res.status(202).json(enqueue(`${memos.length} memo(s)`, () => runMemos(memos, date, cfg, index)));
   });
 
   // Recall: ranked notes for a query. Research notes are never returned.
