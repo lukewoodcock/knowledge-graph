@@ -8,6 +8,7 @@ import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import { projectName } from '../src/hook/io';
+import { listen } from './helpers/mock-ollama';
 
 const HOOK = path.join(__dirname, '..', 'src', 'hook', 'stop.ts');
 
@@ -96,8 +97,7 @@ describe('capture hook entrypoint', () => {
         res.end('{"status":"accepted"}');
       });
     });
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    url = `http://127.0.0.1:${(server.address() as { port: number }).port}/webhook/knowledge-graph/trigger`;
+    url = `http://127.0.0.1:${await listen(server)}/webhook/knowledge-graph/trigger`;
   });
 
   afterAll(() => new Promise<void>(resolve => server.close(() => resolve())));
