@@ -1,4 +1,5 @@
 import express, { Express } from 'express';
+import * as http from 'http';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { Config } from './config';
@@ -156,4 +157,13 @@ export function createApp(cfg: Config): Express {
   });
 
   return app;
+}
+
+/** Creates the app and listens on cfg.host:cfg.port; resolves once it is listening. */
+export function startServer(cfg: Config): Promise<http.Server> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(createApp(cfg));
+    server.once('error', reject);
+    server.listen(cfg.port, cfg.host, () => resolve(server));
+  });
 }

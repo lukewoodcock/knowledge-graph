@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import request from 'supertest';
 import { Express } from 'express';
-import { createApp } from '../src/server';
+import { createApp, startServer } from '../src/server';
 import { Config, loadConfig } from '../src/config';
 
 /**
@@ -121,6 +121,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     mockState.delayMs = 0;
     mockState.prompts = [];
     cfg = {
+      host: '127.0.0.1',
       port: 0,
       vaultPath: vaultDir,
       ollamaUrl: `http://127.0.0.1:${mockPort}`,
@@ -380,5 +381,36 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     const res = await request(createApp(cfg)).get('/healthz');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+  });
+
+  describe('bind address', () => {
+    /** Starts the real listener on a free port and returns the address it bound. */
+    async function boundAddress(env: NodeJS.ProcessEnv): Promise<string> {
+      const server = await startServer({ ...loadConfig(env), port: 0, vaultPath: vaultDir });
+      try {
+        return (server.address() as { address: string }).address;
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+
+    test('by default the service listens on the loopback interface only', async () => {
+      expect(await boundAddress({})).toBe('127.0.0.1');
+    });
+
+    test('HOST changes the bind address', async () => {
+      expect(await boundAddress({ HOST: '0.0.0.0' })).toBe('0.0.0.0');
+    });
+
+    test('the started service answers on loopback', async () => {
+      const server = await startServer({ ...cfg, host: '127.0.0.1' });
+      try {
+        const { port } = server.address() as { port: number };
+        const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+        expect(await res.json()).toEqual({ status: 'ok' });
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    });
   });
 });
