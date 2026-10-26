@@ -119,6 +119,16 @@ describe('context-injection hook entrypoint', () => {
     expect(context).not.toContain('banana-bread');
   });
 
+  test('by default leaves out matches as weak as an unrelated prompt gets', async () => {
+    // With bge-large, unrelated prompts topped out around 0.51 against real notes.
+    results = [hit('jwt-refresh', 0.68), hit('stripe-webhooks', 0.51)];
+
+    const context = injected(await runHook(prompt('How do I refresh JWTs?'), { SWARM_KG_SEARCH_URL: url }))!;
+
+    expect(context).toContain('jwt-refresh');
+    expect(context).not.toContain('stripe-webhooks');
+  });
+
   test('adds at most three notes, the best-scoring ones', async () => {
     results = [hit('note-a', 0.9), hit('note-b', 0.88), hit('note-c', 0.86), hit('note-d', 0.84), hit('note-e', 0.8)];
 

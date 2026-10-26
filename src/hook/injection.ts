@@ -34,7 +34,12 @@ export interface InjectionConfig {
 }
 
 export const DEFAULT_SEARCH_URL = 'http://localhost:5678/webhook/knowledge-graph/search';
-export const DEFAULT_MIN_SCORE = 0.7;
+/**
+ * Measured with bge-large against ten typical code notes: the right note for
+ * a related prompt scored 0.63 to 0.81, while unrelated prompts ("fix the
+ * typo in the README", "thanks, looks good") never passed 0.51.
+ */
+export const DEFAULT_MIN_SCORE = 0.6;
 export const DEFAULT_MAX_NOTES = 3;
 export const DEFAULT_MAX_CHARS = 4000;
 /**
