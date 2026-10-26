@@ -19,16 +19,18 @@ export function extractContent(response: unknown): string {
 /**
  * Sends a chat completion request to Ollama and returns the assistant text.
  * Throws on non-2xx responses so callers can decide how to degrade.
+ * `think` is sent explicitly: Ollama ignores it for non-thinking models.
  */
 export async function chat(
   baseUrl: string,
   model: string,
   messages: ChatMessage[],
+  think = false,
 ): Promise<string> {
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, stream: false, messages }),
+    body: JSON.stringify({ model, stream: false, think, messages }),
   });
 
   if (!res.ok) {

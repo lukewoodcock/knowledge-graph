@@ -52,6 +52,23 @@ export function appendLinks(content: string, links: string[]): string | null {
   return content + section;
 }
 
+/** "[[name|alias]]" or "[[name#heading]]" -> "name". */
+function linkTarget(link: string): string {
+  return link.replace(/^\[\[/, '').replace(/\]\]$/, '').split(/[|#]/)[0].trim();
+}
+
+/**
+ * Drops links the LLM suggests that only add noise to the graph: a note
+ * linking to itself, and links to the daily session logs.
+ */
+export function filterLinks(links: string[], notePath: string, logNames: string[]): string[] {
+  const self = path.basename(notePath, '.md');
+  return links.filter(l => {
+    const target = linkTarget(l);
+    return target !== self && !logNames.includes(target);
+  });
+}
+
 /** Builds the "- [[basename]] (relative/path.md)" index for the prompt. */
 export function buildNoteIndex(relativePaths: string[]): string {
   return relativePaths
@@ -102,13 +119,15 @@ export async function runLinker(
     return { agent: 'linker', status: 'success', linksWritten: 0 };
   }
 
-  const existing = await listMarkdownFiles(cfg.vaultPath);
-  const indexString = buildNoteIndex(existing);
+  // Session logs aren't link targets, so keep them out of the prompt too.
+  const all = await listMarkdownFiles(cfg.vaultPath);
+  const logNames = all.filter(f => f.startsWith('logs/')).map(f => path.basename(f, '.md'));
+  const indexString = buildNoteIndex(all.filter(f => !f.startsWith('logs/')));
 
   const raw = await chat(cfg.ollamaUrl, cfg.ollamaModel, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt(indexString, newNotes, language, description) },
-  ]);
+  ], cfg.ollamaThink);
 
   const linkMap = parseLinkMap(raw);
   let linksWritten = 0;
@@ -127,7 +146,8 @@ export async function runLinker(
       continue;
     }
 
-    const updated = appendLinks(content, entry.links_to_add);
+    const links = filterLinks(entry.links_to_add, target.notePath, logNames);
+    const updated = appendLinks(content, links);
     if (updated === null) continue;
 
     await fs.writeFile(fullPath, updated, 'utf8');

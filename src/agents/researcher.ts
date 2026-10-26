@@ -54,7 +54,7 @@ export async function runResearcher(ctx: SwarmContext, cfg: Config): Promise<Not
   const content = await chat(cfg.ollamaUrl, cfg.ollamaModel, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt(ctx) },
-  ]);
+  ], cfg.ollamaThink);
 
   const title = safeTitle(ctx.description || ctx.filePath || 'unknown');
   const notePath = path.join(cfg.vaultPath, 'research', `${ctx.today}_research_${title}.md`);
