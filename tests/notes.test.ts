@@ -22,7 +22,10 @@ describe('note and related endpoints (end-to-end)', () => {
     mockPort = await listen(mockServer);
   });
 
-  afterAll(() => close(mockServer));
+  afterAll(() => {
+    mockServer.closeAllConnections();
+    return close(mockServer);
+  });
 
   beforeEach(async () => {
     vaultDir = await fs.mkdtemp(path.join(os.tmpdir(), 'swarm-notes-'));
