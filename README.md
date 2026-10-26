@@ -87,13 +87,62 @@ If one agent fails, the run degrades gracefully: `status` becomes `"partial"`,
 the surviving note is still written and linked, and an `errors` array explains
 what failed.
 
+### Trigger from Claude Code (Stop hook)
+
+`dist/hook/stop.js` is a Claude Code
+[Stop hook](https://code.claude.com/docs/en/hooks#stop): at the end of each
+Claude turn it reads the session transcript, finds the files Claude changed
+since your last prompt (Edit / Write / MultiEdit / NotebookEdit calls that
+succeeded), and POSTs **one trigger per changed file** to the webhook. Each
+one has your prompt as `description`, `language` from the file extension,
+and `changed_code` from `git diff HEAD -- <file>`, or from the tool input when
+the file isn't tracked; both are capped at 4 KB. A turn with no edits sends nothing.
+
+It never gets in Claude's way: nothing on stdout, always exit 0, a 2s
+timeout per POST and a 5s hard deadline. It does nothing when
+`stop_hook_active` is true, when `SWARM_KG_DISABLE=1`, or when the session's
+`cwd` is inside `SWARM_KG_VAULT_PATH`, so Claude editing the vault can't
+feed the graph its own notes.
+
+Wire it into a demo project:
+
+```bash
+npm install && npm run build                 # in this repo, produces dist/hook/stop.js
+mkdir -p /path/to/demo-project/.claude
+cp examples/claude-settings.json /path/to/demo-project/.claude/settings.json
+# then edit the two /ABSOLUTE/PATH/TO placeholders in that file
+```
+
+If the demo project already has a `.claude/settings.json`, merge the
+`hooks.Stop` entry from [`examples/claude-settings.json`](examples/claude-settings.json)
+into it instead. `async: true` means Claude doesn't wait for the hook at all.
+Check it's loaded with `/hooks` in Claude Code.
+
+Try it by hand without Claude:
+
+```bash
+echo '{"hook_event_name":"Stop","stop_hook_active":false,
+       "cwd":"'"$PWD"'","transcript_path":"'"$PWD"'/tests/fixtures/stop-transcript.jsonl"}' \
+  | SWARM_KG_DEBUG=1 node dist/hook/stop.js
+# [swarm-kg hook] 202 /demo/app/src/auth/jwt.ts   (one line per file, on stderr)
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SWARM_KG_URL` | `http://localhost:5678/webhook/knowledge-graph/trigger` | Webhook to POST to |
+| `SWARM_KG_VAULT_PATH` | unset | Skip sessions whose `cwd` is inside this path, and edits to files in it |
+| `SWARM_KG_DISABLE` | unset | `1` turns the hook off |
+| `SWARM_KG_MAX_FILES` | `5` | Most triggers sent per turn |
+| `SWARM_KG_TIMEOUT_MS` | `2000` | Per-POST timeout |
+| `SWARM_KG_DEBUG` | unset | `1` logs what it did to stderr |
+
 ## Development
 
 ```bash
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 44 tests, <1s, no Docker needed
+npm test             # vitest — 73 tests, <1s, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -106,10 +155,15 @@ src/
 ├── config.ts           # env var loading
 ├── ollama.ts           # /api/chat client + response parsing
 ├── vault.ts            # safeTitle, frontmatter, file helpers
-└── agents/
-    ├── documenter.ts
-    ├── researcher.ts
-    └── linker.ts
+├── agents/
+│   ├── documenter.ts
+│   ├── researcher.ts
+│   └── linker.ts
+└── hook/               # Claude Code Stop hook (dist/hook/stop.js)
+    ├── stop.ts         # entrypoint: stdin → transcript → POSTs
+    ├── transcript.ts   # pure: last turn's prompt + edits from the JSONL
+    ├── payload.ts      # pure: config, skip rules, webhook payloads
+    └── io.ts           # stdin, git diff, fetch (never throw)
 tests/                  # vitest unit + in-process end-to-end tests
 ```
 
