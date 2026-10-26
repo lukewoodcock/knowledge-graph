@@ -357,13 +357,34 @@ echo '{"hook_event_name":"Stop","stop_hook_active":false,
 | `SWARM_KG_TIMEOUT_MS` | `2000` | Per-POST timeout |
 | `SWARM_KG_DEBUG` | unset | `1` logs what it did to stderr |
 
+### Context injection (UserPromptSubmit hook)
+
+`dist/hook/prompt.js` is a Claude Code
+[UserPromptSubmit hook](https://code.claude.com/docs/en/hooks#userpromptsubmit)
+that does recall automatically: it searches the graph with each prompt and, when
+notes clear a relevance threshold (0.6 by default), adds the best three as
+additional context in a block marking them as reference notes, not
+instructions, capped at 4,000 characters. It's off unless a project adds its
+entry, from
+[`examples/claude-settings.context-injection.json`](examples/claude-settings.context-injection.json),
+to its `.claude/settings.json`. If the service is down or takes longer than
+1.5 s it adds nothing and the prompt goes through unchanged; it always exits 0.
+
+[`examples/README.md`](examples/README.md) has the pros and cons of turning it
+on, and its settings. Try it by hand with the service running:
+
+```bash
+echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed one at a time?"}' \
+  | SWARM_KG_DEBUG=1 node dist/hook/prompt.js
+```
+
 ## Development
 
 ```bash
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 157 tests, a couple of seconds, no Docker needed
+npm test             # vitest — 167 tests, a couple of seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -384,11 +405,13 @@ src/
 │   ├── documenter.ts
 │   ├── researcher.ts
 │   └── linker.ts
-├── hook/               # Claude Code Stop hook (dist/hook/stop.js)
+├── hook/               # Claude Code hooks (dist/hook/stop.js, dist/hook/prompt.js)
 │   ├── stop.ts         # entrypoint: stdin → transcript → POSTs
 │   ├── transcript.ts   # pure: last turn's prompt + edits from the JSONL
 │   ├── payload.ts      # pure: config, skip rules, webhook payloads
-│   └── io.ts           # stdin, git diff, fetch (never throw)
+│   ├── io.ts           # stdin, git diff, fetch (never throw)
+│   ├── prompt.ts       # UserPromptSubmit entrypoint: stdin → search → additionalContext
+│   └── injection.ts    # pure: config, skip rules, the reference-notes block
 └── mcp/
     └── server.ts       # stdio MCP server for recall (dist/mcp/server.js)
 tests/                  # vitest unit + in-process end-to-end tests
