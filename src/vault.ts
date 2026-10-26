@@ -41,6 +41,31 @@ export function renderFrontmatter(fm: Frontmatter): string {
   ].join('\n');
 }
 
+/**
+ * Adds `key: "value"` lines to a note's YAML frontmatter, skipping undefined
+ * values. A note without frontmatter gets a block holding just these fields.
+ */
+export function addFrontmatterFields(
+  content: string,
+  fields: Record<string, string | undefined>,
+): string {
+  const lines = Object.entries(fields)
+    .filter((e): e is [string, string] => e[1] !== undefined)
+    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
+  if (lines.length === 0) return content;
+
+  // Everything up to (not including) the closing "---" line.
+  const fm = /^---\r?\n[\s\S]*?\r?\n(?=---[ \t]*(\r?\n|$))/.exec(content);
+  if (!fm) return ['---', ...lines, '---', '', content].join('\n');
+  const end = fm[0].length;
+  return content.slice(0, end) + lines.join('\n') + '\n' + content.slice(end);
+}
+
+/** The frontmatter fields a note written from a capture carries. */
+export function captureFields(ctx: { project?: string; session?: string }): Record<string, string | undefined> {
+  return { project: ctx.project, session: ctx.session };
+}
+
 /** Writes a note, creating parent directories as needed. */
 export async function writeNote(fullPath: string, content: string): Promise<void> {
   await fs.mkdir(path.dirname(fullPath), { recursive: true });

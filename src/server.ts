@@ -13,6 +13,13 @@ interface WebhookPayload {
   language?: string;
   description?: string;
   changed_code?: string;
+  session_id?: string;
+  project?: string;
+}
+
+/** A non-empty string, or undefined for anything else. */
+function optionalString(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
 async function writeSessionLog(ctx: SwarmContext, cfg: Config): Promise<void> {
@@ -119,6 +126,8 @@ export function createApp(cfg: Config): Express {
       description: body.description || '',
       changedCode: body.changed_code || '',
       today: today(),
+      session: optionalString(body.session_id),
+      project: optionalString(body.project),
     };
 
     const runId = randomUUID();
