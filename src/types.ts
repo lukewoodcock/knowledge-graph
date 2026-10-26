@@ -5,6 +5,10 @@ export interface SwarmContext {
   description: string;
   changedCode: string;
   today: string;
+  /** Claude Code session the capture came from, when the source sent one. */
+  session?: string;
+  /** Project the capture came from, when the source sent one. */
+  project?: string;
 }
 
 /** Result returned by the Documenter and Researcher agents. */

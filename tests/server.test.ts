@@ -162,6 +162,41 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     }
   });
 
+  /** Frontmatter block of every note the run wrote under code/ and research/. */
+  async function runNoteFrontmatters(): Promise<string[]> {
+    const out: string[] = [];
+    for (const dir of ['code', 'research']) {
+      for (const f of await fs.readdir(path.join(vaultDir, dir))) {
+        const content = await fs.readFile(path.join(vaultDir, dir, f), 'utf8');
+        out.push(/^---\n([\s\S]*?)\n---/.exec(content)?.[1] ?? '');
+      }
+    }
+    return out;
+  }
+
+  test('a code capture with session and project records both in every note it writes', async () => {
+    await triggerAndWait(createApp(cfg), { ...PAYLOAD, session_id: 'sess-123', project: 'project-a' });
+
+    const frontmatters = await runNoteFrontmatters();
+    expect(frontmatters).toHaveLength(2);
+    for (const fm of frontmatters) {
+      expect(fm).toMatch(/^project: "project-a"$/m);
+      expect(fm).toMatch(/^session: "sess-123"$/m);
+    }
+  });
+
+  test('a code capture without session and project still works, and the fields are absent', async () => {
+    const res = await triggerAndWait(createApp(cfg), PAYLOAD);
+
+    expect(res.body.status).toBe('complete');
+    const frontmatters = await runNoteFrontmatters();
+    expect(frontmatters).toHaveLength(2);
+    for (const fm of frontmatters) {
+      expect(fm).toContain('title:');
+      expect(fm).not.toMatch(/^(project|session):/m);
+    }
+  });
+
   test('writes a research note to research/', async () => {
     await triggerAndWait(createApp(cfg), PAYLOAD);
 

@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { Config } from '../config';
 import { chat } from '../ollama';
-import { safeTitle, writeNote } from '../vault';
+import { addFrontmatterFields, captureFields, safeTitle, writeNote } from '../vault';
 import { SwarmContext, NoteResult } from '../types';
 
 const SYSTEM_PROMPT =
@@ -58,7 +58,7 @@ export async function runResearcher(ctx: SwarmContext, cfg: Config): Promise<Not
 
   const title = safeTitle(ctx.description || ctx.filePath || 'unknown');
   const notePath = path.join(cfg.vaultPath, 'research', `${ctx.today}_research_${title}.md`);
-  await writeNote(notePath, content);
+  await writeNote(notePath, addFrontmatterFields(content, captureFields(ctx)));
 
   return { agent: 'researcher', status: 'success', notePath, title };
 }
