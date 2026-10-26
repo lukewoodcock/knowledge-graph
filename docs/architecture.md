@@ -107,5 +107,9 @@ no change to it ([ADR 0001](adr/0001-markdown-vault-is-the-seam.md)).
 - Same Session links go only to code-capture notes, never to other memos.
 - Context injection skips prompts starting with `/`, so `/recall` does its
   own recall. The 0.6 threshold was measured with `bge-large`.
-- `/remember` is still to land in its own ticket; the memo endpoint it drives
-  is built. `/recall` ships as an example skill with the MCP config.
+- `/remember` and `/recall` ship as example skills with the MCP config.
+  `/remember` sends its memos through a file in the session's scratchpad and
+  a small command (`dist/remember.js`) rather than an inline `curl`: Claude
+  Code's Bash check refuses command text with a brace followed by a quote,
+  which memo JSON always has. The capture hook skips scratchpad files, so that
+  file is never a code capture.
