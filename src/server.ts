@@ -134,6 +134,13 @@ async function runMemos(memos: Memo[], date: string, cfg: Config, index: Embeddi
       linker = { status: 'error', links_written: 0 };
     }
 
+    // After the Linker, so the memos are indexed as finally written.
+    try {
+      await index.indexNotes(written.map(w => w.notePath));
+    } catch (err) {
+      errors.push(`index: ${String(err)}`);
+    }
+
     return {
       status: errors.length === 0 ? 'complete' : 'partial',
       session_date: date,
@@ -234,12 +241,18 @@ export function createApp(cfg: Config): Express {
 
   // Recall: ranked notes for a query. Research notes are never returned.
   app.post('/webhook/knowledge-graph/search', async (req, res) => {
-    const body = (req.body ?? {}) as { query?: unknown; limit?: unknown };
+    const body = (req.body ?? {}) as { query?: unknown; limit?: unknown; kind?: unknown };
     const query = optionalString(body.query);
     if (!query) {
       res.status(400).json({ error: 'Payload must include a non-empty query' });
       return;
     }
+    // Blank or null means no filter.
+    if (body.kind !== undefined && body.kind !== null && typeof body.kind !== 'string') {
+      res.status(400).json({ error: 'kind must be a string, e.g. "todo"' });
+      return;
+    }
+    const kind = optionalString(body.kind);
     const limit = body.limit;
     if (limit !== undefined && !(Number.isInteger(limit) && (limit as number) > 0)) {
       res.status(400).json({ error: `limit must be a whole number from 1 to ${MAX_SEARCH_LIMIT}` });
@@ -247,8 +260,8 @@ export function createApp(cfg: Config): Express {
     }
 
     try {
-      const results = await index.search(query, { limit: limit as number | undefined });
-      res.json({ query, results });
+      const results = await index.search(query, { limit: limit as number | undefined, kind });
+      res.json({ query, ...(kind ? { kind } : {}), results });
     } catch (err) {
       res.status(502).json({ error: `Search failed: ${String(err)}` });
     }

@@ -8,7 +8,14 @@ import { Express } from 'express';
 import { createApp } from '../src/server';
 import { Config } from '../src/config';
 import { parseNote, today } from '../src/vault';
-import { close, createMockOllama, createMockOllamaState, listen, resetMockOllamaState } from './helpers/mock-ollama';
+import {
+  close,
+  createMockOllama,
+  createMockOllamaState,
+  embeddedTexts,
+  listen,
+  resetMockOllamaState,
+} from './helpers/mock-ollama';
 import { triggerAndWait, waitForRun } from './helpers/runs';
 
 const MEMO_URL = '/webhook/knowledge-graph/memo';
@@ -249,6 +256,65 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(run.body.status).toBe('partial');
     expect(run.body.errors.join(' ')).toContain('linker');
     expect((await readNote(run.body.memos[0].note_path)).frontmatter.kind).toBe('decision');
+  });
+
+  function search(app: Express, body: object): Promise<request.Response> {
+    return request(app).post('/webhook/knowledge-graph/search').send(body);
+  }
+
+  test('memos are in the index, with their kind and project, as soon as the run finishes', async () => {
+    const app = createApp(cfg);
+    const run = await memoAndWait(app, { ...MEMO, body: 'We chose a write-through cache.' });
+
+    const res = await search(app, { query: 'cache' });
+
+    expect(res.body.results[0]).toMatchObject({
+      name: run.body.memos[0].name,
+      kind: 'decision',
+      project: 'project-a',
+    });
+  });
+
+  test("session links don't count towards what a memo matches", async () => {
+    const app = createApp(cfg);
+    await codeCapture(app, 'src/docker_docker_docker.ts', 'sess-1');
+    await memoAndWait(app, { ...MEMO, body: 'Nothing about containers here.' });
+
+    const docker = embeddedTexts(mockState).filter(t => t.includes('Nothing about containers'));
+    expect(docker.length).toBeGreaterThan(0);
+    expect(docker.join('\n')).not.toContain('docker');
+  });
+
+  test('search filtered by kind returns only notes of that kind, so open todos can be recalled', async () => {
+    const app = createApp(cfg);
+    await codeCapture(app, 'src/cache.ts', 'sess-1');
+    const run = await memoAndWait(app, [
+      { ...MEMO, kind: 'todo', title: 'Add cache metrics', body: 'Count cache hits.' },
+      { ...MEMO, kind: 'decision', title: 'Cache writes', body: 'Cache cache cache.' },
+      { ...MEMO, kind: 'todo', title: 'Tune postgres', body: 'Postgres pool size.' },
+    ]);
+    const [metrics, , tune] = run.body.memos.map((m: { name: string }) => m.name);
+
+    const res = await search(app, { query: 'cache', kind: 'todo', limit: 10 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.results.map((r: { name: string }) => r.name)).toEqual([metrics, tune]);
+    expect(res.body.results.every((r: { kind: string }) => r.kind === 'todo')).toBe(true);
+  });
+
+  test('search without a kind still returns every kind', async () => {
+    const app = createApp(cfg);
+    await codeCapture(app, 'src/cache.ts', 'sess-1');
+    await memoAndWait(app, { ...MEMO, kind: 'todo', title: 'Add cache metrics', body: 'Count cache hits.' });
+
+    const res = await search(app, { query: 'cache', limit: 10 });
+
+    expect(new Set(res.body.results.map((r: { kind: string }) => r.kind))).toEqual(new Set(['todo', 'code']));
+  });
+
+  test('a kind filter that is not a string is rejected with 400', async () => {
+    const res = await search(createApp(cfg), { query: 'cache', kind: 3 });
+    expect(res.status).toBe(400);
   });
 
   test('two memos with the same title get separate notes', async () => {
