@@ -128,7 +128,7 @@ async function runMemos(memos: Memo[], date: string, cfg: Config, index: Embeddi
     const description = memos.map(m => `${m.kind} memo: ${m.title}`).join('; ');
     let linker: { status: string; links_written: number };
     try {
-      const result = await runLinker(notes, 'unknown', description, cfg);
+      const result = await runLinker(notes, 'unknown', description, cfg, index);
       linker = { status: result.status, links_written: result.linksWritten };
     } catch (err) {
       errors.push(`linker: ${String(err)}`);

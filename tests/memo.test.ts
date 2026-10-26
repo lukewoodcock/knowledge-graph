@@ -192,6 +192,19 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(content).not.toContain(`[[${other}]]`);
   });
 
+  test("a memo and its session's code note are related both ways in the graph", async () => {
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    const run = await memoAndWait(app, MEMO);
+    const memo = run.body.memos[0].name;
+
+    const fromCode = await request(app).get(`/webhook/knowledge-graph/notes/${encodeURIComponent(cache)}/related`);
+    const fromMemo = await request(app).get(`/webhook/knowledge-graph/notes/${encodeURIComponent(memo)}/related`);
+
+    expect(fromCode.body.incoming.map((n: { name: string }) => n.name)).toEqual([memo]);
+    expect(fromMemo.body.outgoing.map((n: { name: string }) => n.name)).toEqual([cache]);
+  });
+
   test('memos do not link to other memos through the session rule', async () => {
     const app = createApp(cfg);
     const first = await memoAndWait(app, MEMO);
@@ -215,10 +228,19 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     return path.join(vaultDir, 'memos', `${today()}_${title.replace(/[^a-zA-Z0-9_\-.]/g, '_')}.md`);
   }
 
+  /** A note written by hand before the service starts, so startup indexes it. */
+  async function writeVaultNote(relPath: string, content: string): Promise<void> {
+    await fs.mkdir(path.dirname(path.join(vaultDir, relPath)), { recursive: true });
+    await fs.writeFile(path.join(vaultDir, relPath), content, 'utf8');
+  }
+
+  /** Marks the user prompt the Linker sends. */
+  const LINKER_PROMPT = '### New note:';
+
   test('the Linker adds similarity links on top of the session links, each reported once', async () => {
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
     const app = createApp(cfg);
     const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
-    await fs.writeFile(path.join(vaultDir, 'code', 'existing-note.md'), '# Existing\n', 'utf8');
     mockState.linkTargets = [memoPath(MEMO.title)];
     // The Linker also suggests a note the session rule already links.
     mockState.links = ['[[existing-note]]', `[[${cache}]]`];
@@ -234,18 +256,21 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
   });
 
   test("the Linker is told about the memo, its kind and title", async () => {
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
     await memoAndWait(createApp(cfg), MEMO);
 
-    const linkerPrompt = mockState.prompts.find(p => p.includes('New notes just added'));
+    const linkerPrompt = mockState.prompts.find(p => p.includes(LINKER_PROMPT));
     expect(linkerPrompt).toContain(memoPath(MEMO.title));
     expect(linkerPrompt).toContain('Use write-through caching');
     expect(linkerPrompt).toContain('decision');
   });
 
   test('a memo run skips the Documenter and Researcher', async () => {
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
     await memoAndWait(createApp({ ...cfg, researcher: true }), MEMO);
 
-    expect(mockState.prompts.every(p => p.includes('New notes just added'))).toBe(true);
+    expect(mockState.prompts).toHaveLength(1);
+    expect(mockState.prompts[0]).toContain(LINKER_PROMPT);
     await expect(fs.readdir(path.join(vaultDir, 'code'))).rejects.toThrow();
     await expect(fs.readdir(path.join(vaultDir, 'research'))).rejects.toThrow();
   });
@@ -280,7 +305,8 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     await codeCapture(app, 'src/docker_docker_docker.ts', 'sess-1');
     await memoAndWait(app, { ...MEMO, body: 'Nothing about containers here.' });
 
-    const docker = embeddedTexts(mockState).filter(t => t.includes('Nothing about containers'));
+    // Index embeds start with the note's context prefix.
+    const docker = embeddedTexts(mockState).filter(t => t.startsWith('Note: ') && t.includes('Nothing about containers'));
     expect(docker.length).toBeGreaterThan(0);
     expect(docker.join('\n')).not.toContain('docker');
   });
@@ -330,7 +356,8 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     // The memo's Linker call comes only after every call of the code capture,
     // so the memo already sees, and links to, the code note.
     const owners = mockState.prompts.map(p => (p.includes('capture-code') ? 'code' : 'memo'));
-    expect(owners).toEqual(['code', 'code', 'memo']);
+    expect(owners).toContain('memo');
+    expect(owners).toEqual([...owners.filter(o => o === 'code'), ...owners.filter(o => o === 'memo')]);
     expect(memoRun.body.memos[0].links).toHaveLength(1);
   });
 
