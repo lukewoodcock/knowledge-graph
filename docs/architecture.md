@@ -29,7 +29,7 @@ flowchart LR
   end
 
   subgraph B["Session B, project B"]
-    MCP["MCP server, stdio<br/>search_notes, get_note,<br/>related_notes"]
+    MCP["MCP server, stdio<br/>search_notes, get_note,<br/>related_notes,<br/>guided by /recall"]
     CI["Context-injection hook<br/>UserPromptSubmit, sync"]
     AG["Agent answers,<br/>citing the notes"]
   end
@@ -80,7 +80,7 @@ prompt is searched and the few notes that clear the threshold are added.
   nobody on the same wifi can send captures or read notes. The MCP server
   speaks stdio and has no listener at all.
 - **Recalled notes are data, not instructions.** Notes can hold text from
-  any captured file. Every MCP tool description says so, and context
+  any captured file. Every MCP tool description and the `/recall` skill say so, and context
   injection wraps notes in a `<swarm-kg-reference-notes>` block that tells the
   agent not to follow them, with any copy of that tag inside a note escaped.
 - **A size cap on injected text.** At most three notes and 4,000 characters
@@ -107,5 +107,5 @@ no change to it ([ADR 0001](adr/0001-markdown-vault-is-the-seam.md)).
 - Same Session links go only to code-capture notes, never to other memos.
 - Context injection skips prompts starting with `/`, so `/recall` does its
   own recall. The 0.6 threshold was measured with `bge-large`.
-- The `/recall` and `/remember` skills are instructions, not code, and land in
-  their own tickets; the memo endpoint and MCP tools they drive are built.
+- `/remember` is still to land in its own ticket; the memo endpoint it drives
+  is built. `/recall` ships as an example skill with the MCP config.
