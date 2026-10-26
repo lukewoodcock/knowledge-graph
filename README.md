@@ -15,6 +15,9 @@ This is a TypeScript service — a migration of the original
 code for easier review, testing, and collaboration. **The webhook contract is
 unchanged**: existing IDE integrations and curl commands work as-is.
 
+For the whole loop on one page (capture, run, vault and recall, the trade-offs
+and the safety decisions), see [docs/architecture.md](docs/architecture.md).
+
 ```
 IDE ──POST /webhook/knowledge-graph/trigger──►  swarm-kg service
                                   (memos: POST …/memo skip straight to the Linker)
