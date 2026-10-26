@@ -16,6 +16,7 @@ import {
   resetMockOllamaState,
 } from './helpers/mock-ollama';
 import { triggerAndWait } from './helpers/runs';
+import { reindex } from '../src/reindex';
 
 const SEARCH_URL = '/webhook/knowledge-graph/search';
 
@@ -242,6 +243,132 @@ describe('search over the embedding index (end-to-end)', () => {
     const kafkaChunk = texts.find(t => t.includes('kafka'))!;
     const snippetStart = res.body.results[0].snippet.replace(/…$/, '');
     expect(kafkaChunk).toContain(`\n\n${snippetStart}`);
+  });
+
+  /** Names of the results for a query, best first. */
+  async function resultNames(app: Express, query: string): Promise<string[]> {
+    const res = await search(app, { query, limit: 50 });
+    expect(res.status).toBe(200);
+    return res.body.results.filter((r: { score: number }) => r.score > 0).map((r: { name: string }) => r.name);
+  }
+
+  test('on startup, a note edited by hand is re-embedded and unchanged notes are not', async () => {
+    await writeVaultNote('code/edited.md', plainNote('Edited', ['## Notes', 'docker']));
+    await writeVaultNote('code/untouched.md', plainNote('Untouched', ['## Notes', 'python']));
+    expect(await resultNames(createApp(cfg), 'docker')).toEqual(['edited']);
+
+    await writeVaultNote('code/edited.md', plainNote('Edited', ['## Notes', 'kafka']));
+    resetMockOllamaState(mockState);
+    const restarted = createApp(cfg);
+
+    expect(await resultNames(restarted, 'kafka')).toEqual(['edited']);
+    expect(await resultNames(restarted, 'docker')).toEqual([]);
+    const reembedded = embeddedTexts(mockState).filter(t => t.startsWith('Note: '));
+    expect(reembedded.some(t => t.startsWith('Note: Edited'))).toBe(true);
+    expect(reembedded.some(t => t.startsWith('Note: Untouched'))).toBe(false);
+  });
+
+  test('on startup, a note deleted by hand drops out of search', async () => {
+    await writeVaultNote('code/gone.md', plainNote('Gone', ['## Notes', 'docker']));
+    expect(await resultNames(createApp(cfg), 'docker')).toEqual(['gone']);
+
+    await fs.rm(path.join(vaultDir, 'code/gone.md'));
+
+    expect(await resultNames(createApp(cfg), 'docker')).toEqual([]);
+  });
+
+  test('deleting the index file loses nothing: the next start rebuilds it from the notes', async () => {
+    await writeVaultNote('code/by-hand.md', plainNote('By hand', ['## Notes', 'docker']));
+    const app = createApp(cfg);
+    await triggerAndWait(app, PAYLOAD);
+    const before = await search(app, { query: 'jwt docker', limit: 50 });
+
+    await fs.rm(path.join(vaultDir, '.swarm-kg'), { recursive: true });
+    const after = await search(createApp(cfg), { query: 'jwt docker', limit: 50 });
+
+    expect(after.body.results).toEqual(before.body.results);
+    expect(after.body.results).toHaveLength(2);
+  });
+
+  test('a corrupt index file is thrown away and rebuilt from the notes on startup', async () => {
+    await writeVaultNote('code/a.md', plainNote('A', ['## Notes', 'docker']));
+    await writeVaultNote('.swarm-kg/index.json', '{ not json');
+
+    expect(await resultNames(createApp(cfg), 'docker')).toEqual(['a']);
+  });
+
+  test('a session log is never indexed or returned', async () => {
+    await triggerAndWait(createApp(cfg), PAYLOAD);
+
+    expect(embeddedTexts(mockState).some(t => t.includes('Session Log'))).toBe(false);
+    const res = await search(createApp(cfg), { query: 'jwt', limit: 50 });
+    expect(res.body.results.some((r: { path: string }) => r.path.startsWith('logs/'))).toBe(false);
+  });
+
+  test('changing the embedding model re-embeds every note with the new one', async () => {
+    await writeVaultNote('code/note.md', plainNote('Note', ['## Notes', 'docker']));
+    await search(createApp(cfg), { query: 'docker' });
+
+    resetMockOllamaState(mockState);
+    await search(createApp({ ...cfg, embedModel: 'newer-embed' }), { query: 'docker' });
+
+    const calls = mockState.embedCalls.filter(c => c.input.some(t => t.startsWith('Note: Note')));
+    expect(calls.map(c => c.model)).toEqual(['newer-embed']);
+  });
+
+  describe('reindex', () => {
+    const REINDEX_URL = '/webhook/knowledge-graph/reindex';
+
+    test('rebuilds the index from the notes alone, re-embedding every note', async () => {
+      const app = createApp(cfg);
+      await writeVaultNote('code/a.md', plainNote('A', ['## Notes', 'docker']));
+      await writeVaultNote('code/b.md', plainNote('B', ['## Notes', 'docker python']));
+      await search(app, { query: 'docker' });
+      resetMockOllamaState(mockState);
+
+      const res = await request(app).post(REINDEX_URL);
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ status: 'complete', notes: 2, embedded: 2 });
+      const titles = new Set(embeddedTexts(mockState).filter(t => t.startsWith('Note: ')).map(t => t.split('\n')[0]));
+      expect(titles).toEqual(new Set(['Note: A', 'Note: B']));
+      expect(await resultNames(createApp(cfg), 'docker')).toEqual(['a', 'b']);
+    });
+
+    test('picks up notes written by hand while the service was running', async () => {
+      const app = createApp(cfg);
+      await search(app, { query: 'docker' });
+      await writeVaultNote('code/late.md', plainNote('Late', ['## Notes', 'docker']));
+
+      await request(app).post(REINDEX_URL);
+
+      expect(await resultNames(app, 'docker')).toEqual(['late']);
+    });
+
+    test('the reindex command asks the running service to rebuild its index', async () => {
+      await writeVaultNote('code/a.md', plainNote('A', ['## Notes', 'docker']));
+      const server = createApp(cfg).listen(0, '127.0.0.1');
+      await new Promise(resolve => server.once('listening', resolve));
+      const port = (server.address() as { port: number }).port;
+      const lines: string[] = [];
+
+      try {
+        const code = await reindex({ SWARM_KG_SERVICE_URL: `http://127.0.0.1:${port}` }, l => lines.push(l));
+
+        expect(code).toBe(0);
+        expect(lines.join('\n')).toContain('1 notes');
+      } finally {
+        await new Promise(resolve => server.close(resolve));
+      }
+    });
+
+    test('the reindex command fails clearly when the service is down', async () => {
+      const lines: string[] = [];
+      const code = await reindex({ SWARM_KG_SERVICE_URL: 'http://127.0.0.1:9' }, l => lines.push(l));
+
+      expect(code).toBe(1);
+      expect(lines.join('\n')).toContain('http://127.0.0.1:9');
+    });
   });
 
   test('a query that is missing or empty is rejected', async () => {

@@ -193,6 +193,17 @@ export function createApp(cfg: Config): Express {
     }
   });
 
+  // Throws the index away and rebuilds it from the notes. Replies when done.
+  app.post('/webhook/knowledge-graph/reindex', async (_req, res) => {
+    try {
+      const { notes, embedded } = await index.rebuild();
+      console.log(`index: rebuilt, ${notes} notes embedded`);
+      res.json({ status: 'complete', notes, embedded });
+    } catch (err) {
+      res.status(502).json({ error: `Reindex failed: ${String(err)}` });
+    }
+  });
+
   app.get('/webhook/knowledge-graph/runs/:id', (req, res) => {
     const run = runs.get(req.params.id);
     if (!run) {

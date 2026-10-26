@@ -44,6 +44,7 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.5:9b}
       OLLAMA_THINK: ${OLLAMA_THINK:-false}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-bge-large}
     volumes:
       # Mount your Obsidian vault here. Set VAULT_HOST_PATH in .env.
       - ${VAULT_HOST_PATH:-./vault}:/vault

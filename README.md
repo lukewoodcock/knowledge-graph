@@ -32,6 +32,7 @@ IDE ──POST /webhook/knowledge-graph/trigger──►  swarm-kg service
 cp .env.example .env        # set VAULT_HOST_PATH to your vault
 docker compose up -d --build
 docker exec -it ollama ollama pull qwen3.5:9b
+docker exec -it ollama ollama pull bge-large   # embeddings for search
 ```
 
 Podman on macOS works identically: `podman compose up -d --build`.
@@ -89,6 +90,59 @@ Run status is kept in memory (last 100 runs), so it's lost on restart.
 If one agent fails, the run degrades gracefully: `status` becomes `"partial"`,
 the surviving note is still written and linked, and an `errors` array explains
 what failed.
+
+### Search the graph
+
+Every note is embedded with a local Ollama embedding model (`bge-large` by
+default, set with `OLLAMA_EMBED_MODEL`) as soon as a run writes it, so a run's
+notes are searchable by the time the run finishes. Each `##` section is
+embedded on its own, with the note's title, kind, project and a one-line
+summary in front of it, so a section like "Key Points" still matches questions
+about the note's topic. A section too long for the model (over about 1500
+characters) is split at paragraph breaks into chunks that keep its heading.
+
+```bash
+curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "how did I refresh JWTs?", "limit": 5}' | jq .
+```
+
+```json
+{
+  "query": "how did I refresh JWTs?",
+  "results": [
+    {
+      "name": "2026-06-10_src_auth_jwt.py",
+      "path": "code/2026-06-10_src_auth_jwt.py.md",
+      "kind": "code",
+      "project": "project-a",
+      "snippet": "## Summary\nImplements JWT refresh with a sliding expiry window…",
+      "score": 0.81
+    }
+  ]
+}
+```
+
+`query` is required; `limit` is optional (5 by default, at most 50). A note's
+score is the cosine similarity of its best-matching section, which is also its
+snippet. `kind` is a memo's kind, else the note's `type`. Research notes and
+session logs are never returned.
+
+The vectors live in `.swarm-kg/index.json` inside the vault (Obsidian hides
+dot folders), with a content hash per note. The notes stay the only source of
+truth: on startup the service indexes notes that are missing or changed (seed
+notes, notes you wrote or edited in Obsidian) and drops notes that were
+deleted, and the index can be deleted at any time. To rebuild it from scratch
+while the service runs:
+
+```bash
+npm run build && npm run reindex   # POSTs /webhook/knowledge-graph/reindex
+```
+
+`npm run reindex` talks to `SWARM_KG_SERVICE_URL` (default
+`http://127.0.0.1:5678`). With the service stopped, delete `.swarm-kg/` and
+start it instead. Changing `OLLAMA_EMBED_MODEL` re-embeds every note on the
+next start.
 
 ### Trigger from Claude Code (Stop hook)
 
@@ -160,8 +214,10 @@ src/
 ├── index.ts            # entrypoint
 ├── server.ts           # Express app: webhook + orchestration (replaces n8n Orchestrator)
 ├── config.ts           # env var loading
-├── ollama.ts           # /api/chat client + response parsing
-├── vault.ts            # safeTitle, frontmatter, file helpers
+├── ollama.ts           # /api/chat and /api/embed clients + response parsing
+├── embedding-index.ts  # notes embedded by section, the index file, search
+├── reindex.ts          # npm run reindex: asks the service to rebuild the index
+├── vault.ts            # safeTitle, frontmatter parsing and writing, file helpers
 ├── agents/
 │   ├── documenter.ts
 │   ├── researcher.ts
@@ -189,6 +245,7 @@ runs typecheck, tests, and a production build on every PR.
 | `VAULT_PATH` | `/vault` | Vault path inside the container |
 | `OLLAMA_URL` | `http://ollama:11434` | Ollama API base URL |
 | `OLLAMA_MODEL` | `qwen3.5:9b` | Model for all agents (`qwen2.5-coder:7b`, `llama3.2`, ...) |
+| `OLLAMA_EMBED_MODEL` | `bge-large` | Ollama embedding model for search. Changing it re-embeds every note |
 | `OLLAMA_THINK` | `false` | Let thinking models reason first. ~20x slower on a 9B model |
 | `PORT` | `5678` | Webhook service port |
 
