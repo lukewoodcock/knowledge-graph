@@ -1,4 +1,13 @@
 {
+  "permissions": {
+    "allow": [
+      "Skill(recall)",
+      "mcp__swarm-kg__search_notes",
+      "mcp__swarm-kg__get_note",
+      "mcp__swarm-kg__related_notes"
+    ]
+  },
+  "enabledMcpjsonServers": ["swarm-kg"],
   "hooks": {
     "Stop": [
       {
