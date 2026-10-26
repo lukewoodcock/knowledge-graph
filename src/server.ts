@@ -85,11 +85,12 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
       else errors.push(String(result.reason));
     }
 
-    const linker = await runLinker(notes, ctx.language, ctx.description, cfg);
+    const linker = await runLinker(notes, ctx.language, ctx.description, cfg, index);
 
     // After the Linker, so the indexed content is the note as finally
-    // written. A note that fails to index is still in the vault, and the
-    // next startup sync picks it up.
+    // written (the Linker searches with the note's text, so it doesn't need
+    // the note indexed first). A note that fails to index is still in the
+    // vault, and the next startup sync picks it up.
     try {
       await index.indexNotes(notes.map(n => n.notePath));
     } catch (err) {

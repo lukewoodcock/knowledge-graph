@@ -7,7 +7,8 @@ context from the IDE and the agents run automatically:
 - **Documenter** — summarises what you're building into a structured note (`vault/code/`)
 - **Researcher** — generates a best-practices/pitfalls note (`vault/research/`).
   Off by default; set `RESEARCHER_ENABLED=true` to turn it on
-- **Linker** — connects new notes to existing ones with `[[wikilinks]]`
+- **Linker** — connects new notes to existing ones with `[[wikilinks]]`,
+  choosing from the ten notes most similar to each new note
 
 This is a TypeScript service — a migration of the original
 [n8n-based implementation](https://github.com/lukewoodcock/utils) into plain
@@ -150,6 +151,14 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
 score is the cosine similarity of its best-matching section, which is also its
 snippet. `kind` is a memo's kind, else the note's `type`. Research notes and
 session logs are never returned.
+
+The Linker uses the same search to pick link candidates: each new note's title
+and body are the query, and the ten best hits (never the note itself) are the
+only notes the model may link it to. Links to anything else are dropped, and
+with nothing to link to the model isn't asked at all. The new note doesn't
+need to be indexed for this, so a run indexes its notes once, after the
+Linker. Since research notes are never search hits, they aren't link
+candidates either.
 
 The vectors live in `.swarm-kg/index.json` inside the vault (Obsidian hides
 dot folders), with a content hash per note. The notes stay the only source of
@@ -355,6 +364,7 @@ Behaviour-preserving migration, with a few deliberate fixes:
 - **Partial failure handling** — one agent failing no longer aborts the run
   (`Promise.allSettled`).
 - **Linker path safety** — the linker only writes to notes it just created,
-  so a hallucinated path from the LLM can never touch other files.
+  so a hallucinated path from the LLM can never touch other files, and only
+  links to its candidates, so it never writes a link to a note that doesn't exist.
 - **No URL string-replace hack** — agents are function calls, not HTTP
   round-trips through the workflow engine.

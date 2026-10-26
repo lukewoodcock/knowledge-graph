@@ -174,6 +174,8 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   });
 
   test('linker appends wikilinks to the new code note', async () => {
+    // The Linker only links to notes that exist, so give it one.
+    await fs.writeFile(path.join(vaultDir, 'existing-note.md'), 'An existing note.\n', 'utf8');
     const app = createApp(cfg);
 
     // First pass creates the notes; capture the code note path for the mock.
@@ -192,6 +194,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   });
 
   test('linker drops links to the note itself and to the session log', async () => {
+    await fs.writeFile(path.join(vaultDir, 'existing-note.md'), 'An existing note.\n', 'utf8');
     const app = createApp(cfg);
     const first = await triggerAndWait(app, PAYLOAD);
     const codeNote = first.body.notes.find((n: { agent: string }) => n.agent === 'documenter');
