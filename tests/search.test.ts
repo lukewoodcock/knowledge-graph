@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import request from 'supertest';
+import request from './helpers/http';
 import { Express } from 'express';
 import { createApp } from '../src/server';
 import { Config, loadConfig } from '../src/config';
