@@ -85,4 +85,62 @@ describe('note and related endpoints (end-to-end)', () => {
     expect((await request(app).get(`${NOTES_URL}/workspace`)).status).toBe(404);
     expect((await request(app).get(`${NOTES_URL}/${encodeURIComponent('../swarm-outside')}`)).status).toBe(404);
   });
+
+  test('the related endpoint returns the notes a note links to and the notes that link to it, without session logs', async () => {
+    await writeVaultNote('code/2026-06-10_jwt.py.md', [
+      '---',
+      'title: "JWT refresh"',
+      'type: "code"',
+      'project: "project-a"',
+      '---',
+      '',
+      '## Summary',
+      'Refresh tokens, see [[cache-decision|the caching decision]].',
+      '',
+      '## Related Notes',
+      '- [[2026-06-10_session_log]]',
+      '- [[note-that-does-not-exist]]',
+    ].join('\n'));
+    await writeVaultNote('memos/cache-decision.md', [
+      '---',
+      'title: "Cache invalidation decision"',
+      'kind: "decision"',
+      'project: "project-b"',
+      '---',
+      '',
+      '## Summary',
+      'We chose write-through caching.',
+    ].join('\n'));
+    await writeVaultNote('memos/token-learning.md', [
+      '---',
+      'title: "Token learning"',
+      'kind: "learning"',
+      'project: "project-a"',
+      '---',
+      '',
+      'Builds on [[2026-06-10_jwt.py#Summary]].',
+    ].join('\n'));
+    await writeVaultNote('logs/2026-06-10_session_log.md', '- **File:** see [[2026-06-10_jwt.py]]');
+    await writeVaultNote('code/unrelated.md', '# Unrelated\nNothing to see.');
+
+    const res = await request(createApp(cfg)).get(`${NOTES_URL}/2026-06-10_jwt.py/related`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      name: '2026-06-10_jwt.py',
+      outgoing: [
+        { name: 'cache-decision', path: 'memos/cache-decision.md', title: 'Cache invalidation decision', kind: 'decision', project: 'project-b' },
+      ],
+      incoming: [
+        { name: 'token-learning', path: 'memos/token-learning.md', title: 'Token learning', kind: 'learning', project: 'project-a' },
+      ],
+    });
+  });
+
+  test('asking for the related notes of a note that does not exist is a clear not-found error', async () => {
+    const res = await request(createApp(cfg)).get(`${NOTES_URL}/no-such-note/related`);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('No note named "no-such-note"');
+  });
 });
