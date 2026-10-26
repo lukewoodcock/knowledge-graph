@@ -8,6 +8,7 @@ import { today, appendNote } from './vault';
 import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
+import { readNote, relatedNotes } from './graph';
 import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
 
 interface WebhookPayload {
@@ -199,6 +200,35 @@ export function createApp(cfg: Config): Express {
       res.json({ query, results });
     } catch (err) {
       res.status(502).json({ error: `Search failed: ${String(err)}` });
+    }
+  });
+
+  // Recall: one note in full, by name.
+  app.get('/webhook/knowledge-graph/notes/:name', async (req, res) => {
+    try {
+      const note = await readNote(cfg.vaultPath, req.params.name);
+      if (!note) {
+        res.status(404).json({ error: `No note named "${req.params.name}"` });
+        return;
+      }
+      res.json(note);
+    } catch (err) {
+      res.status(500).json({ error: `Reading the note failed: ${String(err)}` });
+    }
+  });
+
+  // Recall: the notes a note links to and the notes linking to it, so an
+  // agent can walk the graph from a search hit. Session logs are left out.
+  app.get('/webhook/knowledge-graph/notes/:name/related', async (req, res) => {
+    try {
+      const related = await relatedNotes(cfg.vaultPath, req.params.name);
+      if (!related) {
+        res.status(404).json({ error: `No note named "${req.params.name}"` });
+        return;
+      }
+      res.json(related);
+    } catch (err) {
+      res.status(500).json({ error: `Reading the related notes failed: ${String(err)}` });
     }
   });
 

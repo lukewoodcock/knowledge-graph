@@ -14,7 +14,9 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "express": "4.22.2"
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "express": "4.22.2",
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@types/express": "4.17.25",
