@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { Config } from './config';
-import { safeTitle, writeNote } from './vault';
+import { listMarkdownFiles, parseNote, safeTitle, writeNote } from './vault';
 
 /** A memo as the session's agent sent it, validated. */
 export interface Memo {
@@ -19,6 +19,8 @@ export interface MemoNote {
   notePath: string;
   /** The note's name: its file name without `.md`, as a link names it. */
   name: string;
+  /** Names of the code-capture notes from the memo's session that it links to. */
+  sessionLinks: string[];
 }
 
 export const MEMO_KINDS = ['learning', 'decision', 'todo', 'snippet', 'conversation'] as const;
@@ -98,7 +100,33 @@ async function freeNotePath(cfg: Config, date: string, title: string): Promise<s
   }
 }
 
-function renderMemo(memo: Memo, date: string): string {
+/** The heading of the section holding a memo's same-session links. */
+export const SESSION_LINKS_HEADING = 'Same Session';
+
+/**
+ * Names of the notes code captures wrote in each session, keyed by session.
+ * Memos, session logs and dot folders are left out.
+ */
+async function codeNotesBySession(cfg: Config): Promise<Map<string, string[]>> {
+  const bySession = new Map<string, string[]>();
+  const relPaths = (await listMarkdownFiles(cfg.vaultPath)).filter(
+    p => !p.startsWith('memos/') && !p.startsWith('logs/') && !p.split('/').some(seg => seg.startsWith('.')),
+  );
+  for (const relPath of relPaths) {
+    let content: string;
+    try {
+      content = await fs.readFile(path.join(cfg.vaultPath, relPath), 'utf8');
+    } catch {
+      continue;
+    }
+    const session = parseNote(content).frontmatter.session;
+    if (!session) continue;
+    bySession.set(session, [...(bySession.get(session) ?? []), path.basename(relPath, '.md')]);
+  }
+  return bySession;
+}
+
+function renderMemo(memo: Memo, date: string, sessionLinks: string[]): string {
   const fields: Array<[string, string]> = [
     ['title', JSON.stringify(memo.title)],
     ['date', date],
@@ -109,14 +137,31 @@ function renderMemo(memo: Memo, date: string): string {
     ['kind', JSON.stringify(memo.kind)],
     ['project', JSON.stringify(memo.project)],
     ['session', JSON.stringify(memo.session)],
+    // Closed by editing the note in Obsidian.
+    ...(memo.kind === 'todo' ? [['status', JSON.stringify('open')] as [string, string]] : []),
+    ...(memo.files.length > 0 ? [['files', `[${memo.files.map(f => JSON.stringify(f)).join(', ')}]`] as [string, string]] : []),
   ];
   const frontmatter = ['---', ...fields.map(([k, v]) => `${k}: ${v}`), '---'].join('\n');
-  return `${frontmatter}\n\n${memo.body.trim()}\n`;
+  const links =
+    sessionLinks.length > 0
+      ? `\n\n## ${SESSION_LINKS_HEADING}\n${sessionLinks.map(l => `- [[${l}]]`).join('\n')}`
+      : '';
+  return `${frontmatter}\n\n${memo.body}${links}\n`;
 }
 
-/** Writes one memo into the memos folder. */
-export async function writeMemo(memo: Memo, date: string, cfg: Config): Promise<MemoNote> {
-  const notePath = await freeNotePath(cfg, date, memo.title);
-  await writeNote(notePath, renderMemo(memo, date));
-  return { memo, notePath, name: path.basename(notePath, '.md') };
+/**
+ * Writes each memo into the memos folder, linked to every note the code
+ * captures of its session wrote. These links are the service's, not the
+ * Linker's: they hold whatever the Linker makes of the memo.
+ */
+export async function writeMemos(memos: Memo[], date: string, cfg: Config): Promise<MemoNote[]> {
+  const bySession = await codeNotesBySession(cfg);
+  const written: MemoNote[] = [];
+  for (const memo of memos) {
+    const sessionLinks = bySession.get(memo.session) ?? [];
+    const notePath = await freeNotePath(cfg, date, memo.title);
+    await writeNote(notePath, renderMemo(memo, date, sessionLinks));
+    written.push({ memo, notePath, name: path.basename(notePath, '.md'), sessionLinks });
+  }
+  return written;
 }

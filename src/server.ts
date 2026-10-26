@@ -9,7 +9,7 @@ import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
 import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
-import { Memo, MemoNote, parseMemos, writeMemo } from './memos';
+import { Memo, parseMemos, writeMemos } from './memos';
 
 interface WebhookPayload {
   file_path?: string;
@@ -113,12 +113,11 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
 /** A memo run: no Documenter or Researcher; each memo is written, linked and indexed. */
 async function runMemos(memos: Memo[], date: string, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
   try {
-    const written: MemoNote[] = [];
-    for (const memo of memos) written.push(await writeMemo(memo, date, cfg));
+    const written = await writeMemos(memos, date, cfg);
     return {
       status: 'complete',
       session_date: date,
-      memos: written.map(w => ({ name: w.name, note_path: w.notePath, kind: w.memo.kind })),
+      memos: written.map(w => ({ name: w.name, note_path: w.notePath, kind: w.memo.kind, links: w.sessionLinks })),
     };
   } catch (err) {
     return { status: 'error', error: String(err) };

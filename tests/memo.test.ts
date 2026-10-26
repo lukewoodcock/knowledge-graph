@@ -135,6 +135,74 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(run.body.memos.map((m: { kind: string }) => m.kind)).toEqual(kinds);
   });
 
+  test('a todo memo is open; other kinds have no status', async () => {
+    const run = await memoAndWait(createApp(cfg), [
+      { ...MEMO, kind: 'todo', title: 'Add cache metrics' },
+      { ...MEMO, kind: 'learning', title: 'Caches need TTLs' },
+    ]);
+
+    const [todo, learning] = await Promise.all(
+      run.body.memos.map((m: { note_path: string }) => readNote(m.note_path)),
+    );
+    expect(todo.frontmatter.status).toBe('open');
+    expect(learning.frontmatter).not.toHaveProperty('status');
+  });
+
+  test("a memo's files are recorded in its frontmatter", async () => {
+    const run = await memoAndWait(createApp(cfg), { ...MEMO, files: ['src/cache.ts', 'docs/adr/0002-cache.md'] });
+
+    const content = await fs.readFile(run.body.memos[0].note_path, 'utf8');
+    expect(parseNote(content).frontmatter.files).toBe('["src/cache.ts", "docs/adr/0002-cache.md"]');
+  });
+
+  /** Runs a code capture and returns the name of the code note it wrote. */
+  async function codeCapture(app: Express, filePath: string, session: string): Promise<string> {
+    const run = await triggerAndWait(app, {
+      file_path: filePath,
+      language: 'typescript',
+      description: `Work on ${filePath}`,
+      session_id: session,
+      project: 'project-a',
+    });
+    const code = run.body.notes.find((n: { agent: string }) => n.agent === 'documenter');
+    return path.basename(code.note_path, '.md');
+  }
+
+  test('a memo links to every code-capture note from its session, and none from other sessions', async () => {
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    const metrics = await codeCapture(app, 'src/metrics.ts', 'sess-1');
+    const other = await codeCapture(app, 'src/other.ts', 'sess-2');
+
+    const run = await memoAndWait(app, MEMO);
+
+    const memo = run.body.memos[0];
+    expect(memo.links).toEqual(expect.arrayContaining([cache, metrics]));
+    expect(memo.links).not.toContain(other);
+    const content = await fs.readFile(memo.note_path, 'utf8');
+    expect(content).toContain(`[[${cache}]]`);
+    expect(content).toContain(`[[${metrics}]]`);
+    expect(content).not.toContain(`[[${other}]]`);
+  });
+
+  test('memos do not link to other memos through the session rule', async () => {
+    const app = createApp(cfg);
+    const first = await memoAndWait(app, MEMO);
+
+    const second = await memoAndWait(app, { ...MEMO, title: 'Another decision' });
+
+    expect(second.body.memos[0].links).not.toContain(first.body.memos[0].name);
+  });
+
+  test('a memo from a session with no code captures has no session links', async () => {
+    const app = createApp(cfg);
+    await codeCapture(app, 'src/other.ts', 'sess-2');
+
+    const run = await memoAndWait(app, MEMO);
+
+    expect(run.body.memos[0].links).toEqual([]);
+  });
+
   test('two memos with the same title get separate notes', async () => {
     const run = await memoAndWait(createApp(cfg), [MEMO, { ...MEMO, body: 'Another take.' }]);
 
