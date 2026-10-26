@@ -15,6 +15,9 @@ This is a TypeScript service — a migration of the original
 code for easier review, testing, and collaboration. **The webhook contract is
 unchanged**: existing IDE integrations and curl commands work as-is.
 
+For the whole loop on one page (capture, run, vault and recall, the trade-offs
+and the safety decisions), see [docs/architecture.md](docs/architecture.md).
+
 ```
 IDE ──POST /webhook/knowledge-graph/trigger──►  swarm-kg service
                                   (memos: POST …/memo skip straight to the Linker)
@@ -366,6 +369,55 @@ Or from the command line:
 Claude Code then names the tools `mcp__swarm-kg__search_notes` and so on.
 `SWARM_KG_SERVICE_URL` defaults to `http://127.0.0.1:5678`.
 
+### Wire recall into a project (`/recall`)
+
+The [`recall` skill](examples/skills/recall/SKILL.md) tells the agent when
+the graph is worth checking (past work, "how did I...", earlier decisions,
+saved snippets, open todos) and how to use the three tools: search, open the
+best hits, follow links when useful, answer, and cite every note used as a
+`[[wikilink]]` with its project, ending with a **Notes used** list. The agent
+can load it on its own when a request leans on past work, and
+`/recall <question>` makes it answer that question from the graph.
+
+Three files wire it into a project, all in [`examples/`](examples/), next to
+the capture hook:
+
+| Copy | To | What it does |
+|------|----|--------------|
+| `examples/mcp.json` | `<project>/.mcp.json` | Adds the `swarm-kg` MCP server |
+| `examples/skills/recall/` | `<project>/.claude/skills/recall/` | Adds the `/recall` skill |
+| `examples/claude-settings.json` | `<project>/.claude/settings.json` | Pre-approves the skill and the three tools, enables the MCP server, and adds the capture hook |
+
+```bash
+npm install && npm run build               # in this repo, produces dist/mcp/server.js
+cp examples/mcp.json /path/to/demo-project/.mcp.json
+mkdir -p /path/to/demo-project/.claude/skills
+cp -R examples/skills/recall /path/to/demo-project/.claude/skills/recall
+cp examples/claude-settings.json /path/to/demo-project/.claude/settings.json
+# then replace the /ABSOLUTE/PATH/TO placeholders in .mcp.json and settings.json
+```
+
+Merge the entries into existing files instead of overwriting them. A
+symlinked skill folder (`ln -s "$PWD/examples/skills/recall" …/.claude/skills/recall`)
+keeps every project on this repo's copy. The service must be running; if it
+isn't, the tools say so and `/recall` tells you to start it.
+
+Open the project once in an interactive Claude Code session and accept the
+trust dialog and the `swarm-kg` server prompt. Until a folder is trusted,
+Claude Code ignores the `permissions.allow` and `enabledMcpjsonServers`
+entries of its committed `.claude/settings.json`. Headless runs
+(`claude -p`) load the project's skill and MCP server without asking, and
+`/recall` works there anyway because the skill's own `allowed-tools`
+pre-approves the three tools. Recall the agent starts on its own, though, is
+denied in an untrusted folder until you pass
+`--allowedTools "Skill(recall)"`:
+
+```bash
+cd /path/to/demo-project
+claude -p "/recall why did we pick a token bucket for rate limiting?" --output-format json
+claude -p "How did I back up Postgres before?" --allowedTools "Skill(recall)"
+```
+
 ### Trigger from Claude Code (Stop hook)
 
 `dist/hook/stop.js` is a Claude Code
@@ -400,7 +452,7 @@ cp examples/claude-settings.json /path/to/demo-project/.claude/settings.json
 
 If the demo project already has a `.claude/settings.json`, merge the
 `hooks.Stop` entry from [`examples/claude-settings.json`](examples/claude-settings.json)
-into it instead. `async: true` means Claude doesn't wait for the hook at all.
+into it instead (the file's other entries are for recall, above). `async: true` means Claude doesn't wait for the hook at all.
 Check it's loaded with `/hooks` in Claude Code.
 
 Try it by hand without Claude:
