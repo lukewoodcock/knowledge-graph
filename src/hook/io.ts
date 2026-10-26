@@ -35,6 +35,20 @@ export function gitDiff(cwd: string, filePath: string, timeoutMs = 1000): Promis
 }
 
 /**
+ * The root of the project a directory belongs to: the top of its git
+ * working tree (a linked worktree's own folder), or the directory itself
+ * outside one (or when git is slow).
+ */
+export function projectRoot(dir: string, timeoutMs = 1000): Promise<string> {
+  const fallback = path.resolve(dir);
+  return new Promise(resolve => {
+    execFile('git', ['rev-parse', '--show-toplevel'], { cwd: dir, timeout: timeoutMs }, (err, stdout) =>
+      resolve(err || !stdout.trim() ? fallback : stdout.trim()),
+    );
+  });
+}
+
+/**
  * The project a working directory belongs to: the name of its git
  * repository, or the directory's own name outside one (or when git is slow).
  * Uses the repository's common git dir, so a linked worktree is named after

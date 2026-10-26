@@ -24,7 +24,7 @@ async function makeRepo(parent: string, name: string): Promise<string> {
 
 /** Runs the hook with `input` on stdin and an env free of the developer's own SWARM_KG_* settings. */
 function runHook(input: object, env: Record<string, string>): Promise<number | null> {
-  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('SWARM_KG_')));
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('SWARM_KG_') && k !== 'CLAUDE_PROJECT_DIR'));
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--import', 'tsx', HOOK], {
       env: { ...clean, ...env },
@@ -150,5 +150,33 @@ describe('capture hook entrypoint', () => {
     );
 
     expect(received.map(c => c.file_path)).toEqual(['greet.ts']);
+  });
+
+  test("only files inside the session's project become code captures, not Claude's own memory files elsewhere", async () => {
+    const repo = await makeRepo(tmp, 'project-a');
+    await fs.mkdir(path.join(repo, 'src'));
+    const memory = path.join(tmp, 'home', '.claude', 'projects', '-project-a', 'memory', 'MEMORY.md');
+    const transcript = await writeTranscript(tmp, [path.join(repo, 'greet.ts'), memory, path.join(tmp, 'sibling', 'x.ts')]);
+
+    await runHook(
+      { session_id: 'sess-1', transcript_path: transcript, cwd: path.join(repo, 'src'), hook_event_name: 'Stop' },
+      { SWARM_KG_URL: url },
+    );
+
+    expect(received.map(c => c.file_path)).toEqual(['greet.ts']);
+  });
+
+  test("the project is Claude Code's project directory even after the shell cd's elsewhere", async () => {
+    const repo = await makeRepo(tmp, 'project-a');
+    const elsewhere = path.join(tmp, 'elsewhere');
+    await fs.mkdir(elsewhere);
+    const transcript = await writeTranscript(tmp, [path.join(repo, 'greet.ts'), path.join(elsewhere, 'out.txt')]);
+
+    await runHook(
+      { session_id: 'sess-1', transcript_path: transcript, cwd: elsewhere, hook_event_name: 'Stop' },
+      { SWARM_KG_URL: url, CLAUDE_PROJECT_DIR: repo },
+    );
+
+    expect(received.map(c => [c.file_path, c.project])).toEqual([['greet.ts', 'project-a']]);
   });
 }, 20_000);

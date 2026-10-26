@@ -101,36 +101,43 @@ export function truncate(text: string, max: number): string {
   return `${text.slice(0, max)}\n… [truncated ${text.length - max} chars]`;
 }
 
-/** Path relative to cwd when the file is inside it, so notes get readable titles. */
-export function displayPath(filePath: string, cwd?: string): string {
-  if (!cwd || !path.isAbsolute(filePath) || !isInside(filePath, cwd)) return filePath;
-  return path.relative(cwd, filePath);
+/** Path relative to the project when the file is inside it, so notes get readable titles. */
+export function displayPath(filePath: string, projectDir?: string): string {
+  if (!projectDir || !path.isAbsolute(filePath) || !isInside(filePath, projectDir)) return filePath;
+  return path.relative(projectDir, filePath);
+}
+
+/** Where the session works, which decides which edited files are code captures. */
+export interface CaptureScope {
+  /** The session's project root; files outside it are never captured. */
+  projectDir?: string;
+  /** The session's scratchpad (temporary files, such as /remember's memos file). */
+  scratchpadDir?: string;
 }
 
 /**
  * One payload per changed file (deduped, capped at cfg.maxFiles), all
- * sharing the turn's prompt as the description. `diffs` maps a file path to
- * its git diff; files without one fall back to the tool input's new text.
- * Files inside the vault or the session's scratchpad are left out. Each
- * payload carries the session id and project when they're known.
+ * sharing the turn's prompt as the description, each path relative to the
+ * project. `diffs` maps a file path to its git diff; files without one fall
+ * back to the tool input's new text. Only files inside the project become
+ * captures (see changedFiles). Each payload carries the session id and
+ * project when they're known.
  */
 export function buildPayloads(
   turn: Turn,
-  opts: {
-    cwd?: string;
+  opts: CaptureScope & {
     diffs?: Map<string, string>;
     cfg: HookConfig;
     sessionId?: string;
     project?: string;
-    scratchpadDir?: string;
   },
 ): WebhookPayload[] {
-  const { cwd, diffs, cfg, sessionId, project, scratchpadDir } = opts;
+  const { diffs, cfg, sessionId, project, projectDir } = opts;
   const description = truncate(turn.prompt, cfg.maxDescriptionChars);
 
-  return changedFiles(turn, cfg, scratchpadDir)
+  return changedFiles(turn, cfg, opts)
     .map((e: FileEdit) => ({
-      file_path: displayPath(e.filePath, cwd),
+      file_path: displayPath(e.filePath, projectDir),
       language: languageFromPath(e.filePath),
       description,
       changed_code: truncate(diffs?.get(e.filePath) || e.content, cfg.maxCodeChars),
@@ -141,11 +148,16 @@ export function buildPayloads(
 
 /**
  * The files a turn changed that we'd report on, before any diffs are fetched.
- * Files in the session's scratchpad are left out: they're temporary, such as
+ * Only files inside the session's project count: Claude also edits files
+ * elsewhere, such as its own memory files under ~/.claude/projects/, and
+ * those aren't the project's code. Files in the vault or the session's
+ * scratchpad are left out too: the scratchpad holds temporary files, such as
  * the memos file the /remember skill writes there before sending it.
  */
-export function changedFiles(turn: Turn, cfg: HookConfig, scratchpadDir?: string): FileEdit[] {
+export function changedFiles(turn: Turn, cfg: HookConfig, scope: CaptureScope = {}): FileEdit[] {
+  const { projectDir, scratchpadDir } = scope;
   return uniqueFiles(turn.edits)
+    .filter(e => !projectDir || isInside(e.filePath, projectDir))
     .filter(e => !(cfg.vaultPath && isInside(e.filePath, cfg.vaultPath)))
     .filter(e => !(scratchpadDir && isInside(e.filePath, scratchpadDir)))
     .slice(0, cfg.maxFiles);

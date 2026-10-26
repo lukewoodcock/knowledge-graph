@@ -7,7 +7,7 @@
 import { promises as fs } from 'fs';
 import { extractLastTurn } from './transcript';
 import { StopHookInput, buildPayloads, changedFiles, loadHookConfig, skipReason } from './payload';
-import { gitDiff, postPayload, projectName, readStdin } from './io';
+import { gitDiff, postPayload, projectName, projectRoot, readStdin } from './io';
 
 const HARD_DEADLINE_MS = 5000;
 
@@ -25,26 +25,23 @@ async function main(): Promise<void> {
   const turn = extractLastTurn(await fs.readFile(input.transcript_path!, 'utf8'));
   if (!turn) return log('skip: no user prompt in transcript');
 
-  const files = changedFiles(turn, cfg, input.scratchpad_dir);
-  if (files.length === 0) return log('skip: no files edited this turn');
+  // The project root: Claude Code's project directory (where the session
+  // started, even if the shell has since cd'd elsewhere), else the cwd, up to
+  // the top of its git repository. Without either nothing can be captured.
+  const sessionDir = process.env.CLAUDE_PROJECT_DIR || input.cwd;
+  if (!sessionDir) return log('skip: no project directory');
+  const projectDir = await projectRoot(sessionDir);
+  const scope = { projectDir, scratchpadDir: input.scratchpad_dir };
+
+  const files = changedFiles(turn, cfg, scope);
+  if (files.length === 0) return log('skip: no project files edited this turn');
 
   const diffs = new Map<string, string>();
-  let project: string | undefined;
-  if (input.cwd) {
-    const cwd = input.cwd;
-    const naming = projectName(cwd);
-    await Promise.all(files.map(async f => diffs.set(f.filePath, await gitDiff(cwd, f.filePath))));
-    project = await naming;
-  }
+  const naming = projectName(projectDir);
+  await Promise.all(files.map(async f => diffs.set(f.filePath, await gitDiff(projectDir, f.filePath))));
+  const project = await naming;
 
-  const payloads = buildPayloads(turn, {
-    cwd: input.cwd,
-    diffs,
-    cfg,
-    sessionId: input.session_id,
-    project,
-    scratchpadDir: input.scratchpad_dir,
-  });
+  const payloads = buildPayloads(turn, { ...scope, diffs, cfg, sessionId: input.session_id, project });
   const results = await Promise.all(payloads.map(p => postPayload(cfg.url, p, cfg.timeoutMs)));
   results.forEach(r => log(r));
 }

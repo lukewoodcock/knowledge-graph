@@ -429,9 +429,14 @@ one has your prompt as `description`, `language` from the file extension,
 and `changed_code` from `git diff HEAD -- <file>`, or from the tool input when
 the file isn't tracked; both are capped at 4 KB. Every one also carries the
 `session_id` Claude Code gave the hook and the `project`: the name of the git
-repository the session's `cwd` is in (the main repository's name inside a
-linked worktree), or the `cwd` folder's name outside one. A turn with no edits
-sends nothing.
+repository the session's project directory is in (the main repository's name
+inside a linked worktree), or that folder's name outside one. The project
+directory is `CLAUDE_PROJECT_DIR`, which Claude Code sets to where the session
+started, or the hook input's `cwd` without it; the project root is the top of
+its git repository, or the directory itself outside one. Only files inside the
+project root are captured: Claude also edits files elsewhere, such as its own
+memory files under `~/.claude/projects/`, and those are not the project's
+code. A turn with no edits to project files sends nothing.
 
 It never gets in Claude's way: nothing on stdout, always exit 0, a 2s
 timeout per POST and a 5s hard deadline. It does nothing when
@@ -500,7 +505,7 @@ echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 182 tests, a couple of seconds, no Docker needed
+npm test             # vitest — 184 tests, a couple of seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
