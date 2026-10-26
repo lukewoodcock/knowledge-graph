@@ -6,11 +6,19 @@ Copy or merge these into a project's `.claude/settings.json`, then replace the
 
 | File | Hook | What it does |
 |------|------|--------------|
-| [`claude-settings.json`](claude-settings.json) | `Stop` | The capture hook: sends a code capture for each file Claude changed in a turn |
+| [`claude-settings.json`](claude-settings.json) | `Stop` | The capture hook: sends a code capture for each file Claude changed in a turn. Also pre-approves the `/recall` skill and the three recall tools, and enables the MCP server |
 | [`claude-settings.context-injection.json`](claude-settings.context-injection.json) | `UserPromptSubmit` | Context injection: adds the most relevant notes from the graph to every prompt |
 
 Both hooks can live in one settings file: merge the `hooks.UserPromptSubmit`
 entry next to `hooks.Stop`.
+
+Recall needs two more files, which go elsewhere in the project (see the main
+README, "Wire recall into a project"):
+
+| File | Copy to | What it does |
+|------|---------|--------------|
+| [`mcp.json`](mcp.json) | `<project>/.mcp.json` | The `swarm-kg` MCP server: `search_notes`, `get_note`, `related_notes` |
+| [`skills/recall/`](skills/recall/SKILL.md) | `<project>/.claude/skills/recall/` | The `/recall` skill |
 
 ## Context injection
 
