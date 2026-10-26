@@ -10,6 +10,7 @@ import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
 import { readNote, relatedNotes } from './graph';
 import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
+import { Memo, memoLinks, parseMemos, writeMemos } from './memos';
 
 interface WebhookPayload {
   file_path?: string;
@@ -25,22 +26,16 @@ function optionalString(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
-async function writeSessionLog(ctx: SwarmContext, cfg: Config): Promise<void> {
-  const logFile = path.join(cfg.vaultPath, 'logs', `${ctx.today}_session_log.md`);
-  const entry = [
-    `## ${new Date().toISOString()}`,
-    '',
-    `- **File:** ${ctx.filePath}`,
-    `- **Language:** ${ctx.language}`,
-    `- **Description:** ${ctx.description}`,
-    '',
-  ].join('\n');
+/** Appends one capture's entry (its `- **Field:** value` lines) to the day's session log. */
+async function writeSessionLog(date: string, lines: string[], cfg: Config): Promise<void> {
+  const logFile = path.join(cfg.vaultPath, 'logs', `${date}_session_log.md`);
+  const entry = [`## ${new Date().toISOString()}`, '', ...lines, ''].join('\n');
 
   // First entry of the day gets frontmatter; later entries append below it.
   const header = [
     '---',
-    `title: "Session Log ${ctx.today}"`,
-    `date: ${ctx.today}`,
+    `title: "Session Log ${date}"`,
+    `date: ${date}`,
     'tags: [log, session]',
     'related: []',
     'source: "orchestrator"',
@@ -69,7 +64,11 @@ const MAX_RUNS = 100;
 
 async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
   try {
-    await writeSessionLog(ctx, cfg);
+    await writeSessionLog(ctx.today, [
+      `- **File:** ${ctx.filePath}`,
+      `- **Language:** ${ctx.language}`,
+      `- **Description:** ${ctx.description}`,
+    ], cfg);
 
     // Documenter and (when on) Researcher run in parallel. allSettled so one
     // agent failing doesn't take down the other's note.
@@ -111,6 +110,52 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
   }
 }
 
+/** A memo run: no Documenter or Researcher; each memo is written, linked and indexed. */
+async function runMemos(memos: Memo[], date: string, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
+  try {
+    await writeSessionLog(date, memos.map(m => `- **Memo:** ${m.kind}: ${m.title}`), cfg);
+    const written = await writeMemos(memos, date, cfg);
+    const errors: string[] = [];
+
+    // The Linker adds similarity links on top of the session links. A
+    // Linker failure leaves the memos written and linked to their session.
+    const notes: NoteResult[] = written.map(w => ({
+      agent: 'memo',
+      status: 'success',
+      notePath: w.notePath,
+      title: w.memo.title,
+    }));
+    const description = memos.map(m => `${m.kind} memo: ${m.title}`).join('; ');
+    let linker: { status: string; links_written: number };
+    try {
+      const result = await runLinker(notes, 'unknown', description, cfg, index);
+      linker = { status: result.status, links_written: result.linksWritten };
+    } catch (err) {
+      errors.push(`linker: ${String(err)}`);
+      linker = { status: 'error', links_written: 0 };
+    }
+
+    // After the Linker, so the memos are indexed as finally written.
+    try {
+      await index.indexNotes(written.map(w => w.notePath));
+    } catch (err) {
+      errors.push(`index: ${String(err)}`);
+    }
+
+    return {
+      status: errors.length === 0 ? 'complete' : 'partial',
+      session_date: date,
+      memos: await Promise.all(
+        written.map(async w => ({ name: w.name, note_path: w.notePath, kind: w.memo.kind, links: await memoLinks(w) })),
+      ),
+      linker,
+      ...(errors.length > 0 ? { errors } : {}),
+    };
+  } catch (err) {
+    return { status: 'error', error: String(err) };
+  }
+}
+
 export function createApp(cfg: Config): Express {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
@@ -132,6 +177,25 @@ export function createApp(cfg: Config): Express {
   // so several runs never compete for one local Ollama. runSwarm never
   // rejects, so a failed run can't stall the runs behind it.
   let queue: Promise<void> = Promise.resolve();
+
+  /** Registers a run, queues its work, and returns the 202 body that points at it. */
+  function enqueue(label: string, work: () => Promise<RunResult>) {
+    const runId = randomUUID();
+    runs.set(runId, { status: 'running', run_id: runId });
+    // Map iterates in insertion order, so the first key is the oldest run.
+    if (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value!);
+
+    // Queued runs report 'running' too, so the status contract is unchanged.
+    queue = queue.then(async () => {
+      const started = Date.now();
+      const result = await work();
+      runs.set(runId, { ...result, run_id: runId });
+      const secs = ((Date.now() - started) / 1000).toFixed(1);
+      console.log(`run ${runId} ${result.status} in ${secs}s (${label})`);
+    });
+
+    return { status: 'accepted', run_id: runId, status_url: `/webhook/knowledge-graph/runs/${runId}` };
+  }
 
   app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok' });
@@ -160,35 +224,36 @@ export function createApp(cfg: Config): Express {
       project: optionalString(body.project),
     };
 
-    const runId = randomUUID();
-    runs.set(runId, { status: 'running', run_id: runId });
-    // Map iterates in insertion order, so the first key is the oldest run.
-    if (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value!);
+    res.status(202).json(enqueue(ctx.filePath || ctx.description, () => runSwarm(ctx, cfg, index)));
+  });
 
-    // Queued runs report 'running' too, so the status contract is unchanged.
-    queue = queue.then(async () => {
-      const started = Date.now();
-      const result = await runSwarm(ctx, cfg, index);
-      runs.set(runId, { ...result, run_id: runId });
-      const secs = ((Date.now() - started) / 1000).toFixed(1);
-      console.log(`run ${runId} ${result.status} in ${secs}s (${ctx.filePath || ctx.description})`);
-    });
-
-    res.status(202).json({
-      status: 'accepted',
-      run_id: runId,
-      status_url: `/webhook/knowledge-graph/runs/${runId}`,
-    });
+  // Memos: captures the session's agent already wrote. Same queue and reply
+  // as a code capture; the run writes, links and indexes each memo.
+  app.post('/webhook/knowledge-graph/memo', (req, res) => {
+    const parsed = parseMemos(req.body);
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const { memos } = parsed;
+    const date = today();
+    res.status(202).json(enqueue(`${memos.length} memo(s)`, () => runMemos(memos, date, cfg, index)));
   });
 
   // Recall: ranked notes for a query. Research notes are never returned.
   app.post('/webhook/knowledge-graph/search', async (req, res) => {
-    const body = (req.body ?? {}) as { query?: unknown; limit?: unknown };
+    const body = (req.body ?? {}) as { query?: unknown; limit?: unknown; kind?: unknown };
     const query = optionalString(body.query);
     if (!query) {
       res.status(400).json({ error: 'Payload must include a non-empty query' });
       return;
     }
+    // Blank or null means no filter.
+    if (body.kind !== undefined && body.kind !== null && typeof body.kind !== 'string') {
+      res.status(400).json({ error: 'kind must be a string, e.g. "todo"' });
+      return;
+    }
+    const kind = optionalString(body.kind);
     const limit = body.limit;
     if (limit !== undefined && !(Number.isInteger(limit) && (limit as number) > 0)) {
       res.status(400).json({ error: `limit must be a whole number from 1 to ${MAX_SEARCH_LIMIT}` });
@@ -196,8 +261,8 @@ export function createApp(cfg: Config): Express {
     }
 
     try {
-      const results = await index.search(query, { limit: limit as number | undefined });
-      res.json({ query, results });
+      const results = await index.search(query, { limit: limit as number | undefined, kind });
+      res.json({ query, ...(kind ? { kind } : {}), results });
     } catch (err) {
       res.status(502).json({ error: `Search failed: ${String(err)}` });
     }

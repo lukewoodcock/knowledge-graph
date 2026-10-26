@@ -11,9 +11,9 @@ export interface SwarmContext {
   project?: string;
 }
 
-/** Result returned by the Documenter and Researcher agents. */
+/** A note a run just wrote: by the Documenter or Researcher, or a memo. */
 export interface NoteResult {
-  agent: 'documenter' | 'researcher';
+  agent: 'documenter' | 'researcher' | 'memo';
   status: 'success';
   notePath: string;
   title: string;

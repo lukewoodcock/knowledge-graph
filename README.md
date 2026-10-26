@@ -17,6 +17,7 @@ unchanged**: existing IDE integrations and curl commands work as-is.
 
 ```
 IDE ──POST /webhook/knowledge-graph/trigger──►  swarm-kg service
+                                  (memos: POST …/memo skip straight to the Linker)
                                                      │
                                               queue (one run at a time)
                                                      │
@@ -107,6 +108,62 @@ If one agent fails, the run degrades gracefully: `status` becomes `"partial"`,
 the surviving note is still written and linked, and an `errors` array explains
 what failed.
 
+### Send memos
+
+A memo is a capture the agent in your session already wrote: a `learning`,
+`decision`, `todo`, `snippet` or `conversation`. Memos skip the Documenter and
+Researcher. Send one memo, a JSON array of them, or `{"memos": [...]}` (at
+most 20):
+
+```bash
+curl -s -X POST http://localhost:5678/webhook/knowledge-graph/memo \
+  -H "Content-Type: application/json" \
+  -d '{
+    "memos": [{
+      "kind":       "decision",
+      "title":      "Use write-through caching",
+      "body":       "In project-a we chose write-through caching because…",
+      "project":    "project-a",
+      "session_id": "5d1e…",
+      "files":      ["src/cache.ts"]
+    }]
+  }' | jq .
+```
+
+`kind`, `title`, `body`, `project` and `session_id` are required, `files` is
+an optional list of paths. An invalid memo rejects the whole request with
+`400` and an `error` naming each bad field (`memos[1].kind must be one of: …`).
+Otherwise the reply is `202` with a run id and status URL, exactly like a code
+capture, and the run joins the same queue.
+
+The run writes each memo to `vault/memos/<date>_<title>.md` with `kind`,
+`project` and `session` (and `files`) in its frontmatter; todos also get
+`status: open`. The service links each memo, under `## Same Session`, to every
+note the code captures of its session wrote (never to notes from other
+sessions, and not to other memos). The Linker then adds its similarity links
+under `## Related Notes`, and the memos are indexed. The finished run lists
+each memo with all its links, each named once:
+
+```json
+{
+  "run_id": "9a1b…",
+  "status": "complete",
+  "session_date": "2026-06-10",
+  "memos": [
+    {
+      "name": "2026-06-10_Use_write-through_caching",
+      "note_path": "/vault/memos/2026-06-10_Use_write-through_caching.md",
+      "kind": "decision",
+      "links": ["2026-06-10_src_cache.ts", "2026-06-02_redis-notes"]
+    }
+  ],
+  "linker": { "status": "success", "links_written": 1 }
+}
+```
+
+If the Linker or indexing fails, the memos are still written with their
+session links, `status` is `"partial"` and `errors` says what failed.
+
 ### Who can reach the service
 
 There is no authentication, so the service listens on the loopback interface
@@ -150,7 +207,9 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
 `query` is required; `limit` is optional (5 by default, at most 50). A note's
 score is the cosine similarity of its best-matching section, which is also its
 snippet. `kind` is a memo's kind, else the note's `type`. Research notes and
-session logs are never returned.
+session logs are never returned. An optional `kind` in the request returns only
+notes of that kind, e.g. `{"query": "what's left to do?", "kind": "todo"}`
+recalls todos (open ones carry `status: open` until you change it in Obsidian).
 
 The Linker uses the same search to pick link candidates: each new note's title
 and body are the query, and the ten best hits (never the note itself) are the
@@ -325,7 +384,7 @@ echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 138 tests, a couple of seconds, no Docker needed
+npm test             # vitest — 167 tests, a couple of seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -338,6 +397,7 @@ src/
 ├── config.ts           # env var loading
 ├── ollama.ts           # /api/chat and /api/embed clients + response parsing
 ├── embedding-index.ts  # notes embedded by section, the index file, search
+├── memos.ts            # memo validation, memo notes and their same-session links
 ├── reindex.ts          # npm run reindex: asks the service to rebuild the index
 ├── vault.ts            # safeTitle, frontmatter parsing and writing, file helpers
 ├── graph.ts            # one note by name, and the notes linked to and from it
