@@ -7,7 +7,7 @@ import request from 'supertest';
 import { Express } from 'express';
 import { createApp } from '../src/server';
 import { Config } from '../src/config';
-import { parseNote } from '../src/vault';
+import { parseNote, today } from '../src/vault';
 import { close, createMockOllama, createMockOllamaState, listen, resetMockOllamaState } from './helpers/mock-ollama';
 import { triggerAndWait, waitForRun } from './helpers/runs';
 
@@ -201,6 +201,54 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     const run = await memoAndWait(app, MEMO);
 
     expect(run.body.memos[0].links).toEqual([]);
+  });
+
+  /** Where the memo run writes a memo with this title today. */
+  function memoPath(title: string): string {
+    return path.join(vaultDir, 'memos', `${today()}_${title.replace(/[^a-zA-Z0-9_\-.]/g, '_')}.md`);
+  }
+
+  test('the Linker adds similarity links on top of the session links, each reported once', async () => {
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    await fs.writeFile(path.join(vaultDir, 'code', 'existing-note.md'), '# Existing\n', 'utf8');
+    mockState.linkTargets = [memoPath(MEMO.title)];
+    // The Linker also suggests a note the session rule already links.
+    mockState.links = ['[[existing-note]]', `[[${cache}]]`];
+
+    const run = await memoAndWait(app, MEMO);
+
+    expect(run.body.linker).toEqual({ status: 'success', links_written: 1 });
+    const memo = run.body.memos[0];
+    expect(memo.links).toEqual([cache, 'existing-note']);
+    const content = await fs.readFile(memo.note_path, 'utf8');
+    expect(content).toMatch(/## Related Notes\n- \[\[existing-note\]\]/);
+    expect(content).toContain(`## Same Session\n- [[${cache}]]`);
+  });
+
+  test("the Linker is told about the memo, its kind and title", async () => {
+    await memoAndWait(createApp(cfg), MEMO);
+
+    const linkerPrompt = mockState.prompts.find(p => p.includes('New notes just added'));
+    expect(linkerPrompt).toContain(memoPath(MEMO.title));
+    expect(linkerPrompt).toContain('Use write-through caching');
+    expect(linkerPrompt).toContain('decision');
+  });
+
+  test('a memo run skips the Documenter and Researcher', async () => {
+    await memoAndWait(createApp({ ...cfg, researcher: true }), MEMO);
+
+    expect(mockState.prompts.every(p => p.includes('New notes just added'))).toBe(true);
+    await expect(fs.readdir(path.join(vaultDir, 'code'))).rejects.toThrow();
+    await expect(fs.readdir(path.join(vaultDir, 'research'))).rejects.toThrow();
+  });
+
+  test('with Ollama down the memos are still written, and the run is partial', async () => {
+    const run = await memoAndWait(createApp({ ...cfg, ollamaUrl: 'http://127.0.0.1:1' }), MEMO);
+
+    expect(run.body.status).toBe('partial');
+    expect(run.body.errors.join(' ')).toContain('linker');
+    expect((await readNote(run.body.memos[0].note_path)).frontmatter.kind).toBe('decision');
   });
 
   test('two memos with the same title get separate notes', async () => {

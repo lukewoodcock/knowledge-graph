@@ -149,6 +149,33 @@ function renderMemo(memo: Memo, date: string, sessionLinks: string[]): string {
   return `${frontmatter}\n\n${memo.body}${links}\n`;
 }
 
+/** Link targets listed under a `## <heading>` section of a note. */
+function sectionLinks(content: string, heading: string): string[] {
+  const lines = content.split(/\r?\n/);
+  const start = lines.findIndex(l => l.trim() === `## ${heading}`);
+  if (start < 0) return [];
+  const links: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^#{1,2} /.test(line)) break;
+    for (const m of line.matchAll(/\[\[([^\]|#]+)[^\]]*\]\]/g)) links.push(m[1].trim());
+  }
+  return links;
+}
+
+/**
+ * Every note a memo links to as written now: its session links, then the
+ * Linker's similarity links, each name once.
+ */
+export async function memoLinks(note: MemoNote): Promise<string[]> {
+  let similar: string[] = [];
+  try {
+    similar = sectionLinks(await fs.readFile(note.notePath, 'utf8'), 'Related Notes');
+  } catch {
+    // Gone since the run wrote it; the session links are still what was written.
+  }
+  return [...new Set([...note.sessionLinks, ...similar])];
+}
+
 /**
  * Writes each memo into the memos folder, linked to every note the code
  * captures of its session wrote. These links are the service's, not the

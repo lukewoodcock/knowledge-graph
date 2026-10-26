@@ -9,7 +9,7 @@ import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
 import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
-import { Memo, parseMemos, writeMemos } from './memos';
+import { Memo, memoLinks, parseMemos, writeMemos } from './memos';
 
 interface WebhookPayload {
   file_path?: string;
@@ -114,10 +114,34 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
 async function runMemos(memos: Memo[], date: string, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
   try {
     const written = await writeMemos(memos, date, cfg);
+    const errors: string[] = [];
+
+    // The Linker adds similarity links on top of the session links. A
+    // Linker failure leaves the memos written and linked to their session.
+    const notes: NoteResult[] = written.map(w => ({
+      agent: 'memo',
+      status: 'success',
+      notePath: w.notePath,
+      title: w.memo.title,
+    }));
+    const description = memos.map(m => `${m.kind} memo: ${m.title}`).join('; ');
+    let linker: { status: string; links_written: number };
+    try {
+      const result = await runLinker(notes, 'unknown', description, cfg);
+      linker = { status: result.status, links_written: result.linksWritten };
+    } catch (err) {
+      errors.push(`linker: ${String(err)}`);
+      linker = { status: 'error', links_written: 0 };
+    }
+
     return {
-      status: 'complete',
+      status: errors.length === 0 ? 'complete' : 'partial',
       session_date: date,
-      memos: written.map(w => ({ name: w.name, note_path: w.notePath, kind: w.memo.kind, links: w.sessionLinks })),
+      memos: await Promise.all(
+        written.map(async w => ({ name: w.name, note_path: w.notePath, kind: w.memo.kind, links: await memoLinks(w) })),
+      ),
+      linker,
+      ...(errors.length > 0 ? { errors } : {}),
     };
   } catch (err) {
     return { status: 'error', error: String(err) };
