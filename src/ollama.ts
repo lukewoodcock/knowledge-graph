@@ -49,7 +49,9 @@ export async function embed(baseUrl: string, model: string, input: string[]): Pr
   const res = await fetch(`${baseUrl}/api/embed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, input }),
+    // Truncation is Ollama's default, but sections are chunked to fit, so
+    // it's only a backstop; sent explicitly in case the default changes.
+    body: JSON.stringify({ model, input, truncate: true }),
   });
 
   if (!res.ok) {

@@ -133,4 +133,129 @@ describe('search over the embedding index (end-to-end)', () => {
     expect(mockState.embedCalls.length).toBeGreaterThan(0);
     expect(mockState.embedCalls.every(c => c.model === 'other-embed')).toBe(true);
   });
+
+  /** A hand-written note whose prefix (title, summary) holds no mock vocabulary. */
+  function plainNote(title: string, sections: string[]): string {
+    return [
+      '---',
+      `title: "${title}"`,
+      'type: "code"',
+      'project: "project-a"',
+      '---',
+      '',
+      '## Overview',
+      'Notes on tooling.',
+      '',
+      ...sections,
+    ].join('\n');
+  }
+
+  test("a note's score is its best section's score, and results are ranked by it", async () => {
+    // One section entirely about docker, two about python.
+    await writeVaultNote('code/focused.md', plainNote('Focused', [
+      '## Containers', 'We run docker.', '',
+      '## Scripts', 'python python python', '',
+      '## More scripts', 'python python python',
+    ]));
+    // One section that mentions docker once among python.
+    await writeVaultNote('code/mixed.md', plainNote('Mixed', ['## Notes', 'docker python python']));
+    // Nothing about docker at all.
+    await writeVaultNote('code/unrelated.md', plainNote('Unrelated', ['## Notes', 'rust']));
+
+    const res = await search(createApp(cfg), { query: 'docker' });
+
+    expect(res.body.results.map((r: { name: string }) => r.name)).toEqual(['focused', 'mixed', 'unrelated']);
+    // "## Containers / We run docker." is all docker: cosine 1.
+    expect(res.body.results[0].score).toBeCloseTo(1, 6);
+    // docker 1, python 2: cosine 1 / sqrt(5).
+    expect(res.body.results[1].score).toBeCloseTo(0.4472136, 6);
+    expect(res.body.results[2].score).toBe(0);
+  });
+
+  test('search returns at most the requested number of results, best first', async () => {
+    await writeVaultNote('code/one.md', plainNote('One', ['## Notes', 'docker python']));
+    await writeVaultNote('code/two.md', plainNote('Two', ['## Notes', 'docker']));
+    await writeVaultNote('code/three.md', plainNote('Three', ['## Notes', 'docker python python python']));
+
+    const res = await search(createApp(cfg), { query: 'docker', limit: 2 });
+
+    expect(res.body.results.map((r: { name: string }) => r.name)).toEqual(['two', 'one']);
+  });
+
+  test('each result has the note name, kind, project, best-matching snippet and score', async () => {
+    await writeVaultNote('code/focused.md', plainNote('Focused', [
+      '## Containers', 'We run docker.', '',
+      '## Scripts', 'python python python',
+    ]));
+
+    const res = await search(createApp(cfg), { query: 'docker' });
+
+    expect(res.body.results).toEqual([
+      {
+        name: 'focused',
+        path: 'code/focused.md',
+        kind: 'code',
+        project: 'project-a',
+        snippet: '## Containers\nWe run docker.',
+        score: expect.closeTo(1, 6),
+      },
+    ]);
+  });
+
+  test("research notes never appear in search results, even when they're the best match", async () => {
+    const app = createApp(cfg);
+    // The run writes a code note and a research note, both about JWT.
+    await triggerAndWait(app, PAYLOAD);
+    await writeVaultNote('research/by-hand.md', [
+      '---', 'title: "JWT"', 'type: "research"', '---', '', '## Overview', 'jwt jwt jwt',
+    ].join('\n'));
+    await triggerAndWait(app, PAYLOAD);
+
+    const res = await search(createApp(cfg), { query: 'jwt', limit: 50 });
+
+    expect(res.body.results.length).toBeGreaterThan(0);
+    for (const r of res.body.results) {
+      expect(r.kind).not.toBe('research');
+      expect(r.path).not.toMatch(/^research\//);
+    }
+  });
+
+  test('a section too long for the embedding model is split, so none of it is cut off', async () => {
+    // ~5000 characters in one section, well past bge-large's 512 tokens.
+    const paragraphs = Array.from({ length: 25 }, (_, i) => `Paragraph ${i}: ${'filler words here '.repeat(10).trim()}.`);
+    paragraphs.push('The very end mentions kafka.');
+    await writeVaultNote('code/long.md', plainNote('Long', ['## Details', paragraphs.join('\n\n')]));
+    // One giant paragraph with no breaks at all.
+    await writeVaultNote('code/wall.md', plainNote('Wall', ['## Wall', `${'word '.repeat(1500)}rust`]));
+
+    const res = await search(createApp(cfg), { query: 'kafka' });
+
+    const texts = embeddedTexts(mockState).filter(t => t.startsWith('Note: Long') || t.startsWith('Note: Wall'));
+    for (const t of texts) expect(t.length).toBeLessThanOrEqual(2000);
+    // Every paragraph made it into some embed input, the last one included.
+    for (const p of paragraphs) expect(texts.some(t => t.includes(p))).toBe(true);
+    expect(texts.some(t => t.startsWith('Note: Wall') && t.endsWith('rust'))).toBe(true);
+    // A later chunk still says which section it came from.
+    expect(texts.filter(t => t.includes('## Details')).length).toBeGreaterThan(1);
+    // The chunk holding the match is the best section, so the note ranks first.
+    expect(res.body.results[0].name).toBe('long');
+    const kafkaChunk = texts.find(t => t.includes('kafka'))!;
+    const snippetStart = res.body.results[0].snippet.replace(/…$/, '');
+    expect(kafkaChunk).toContain(`\n\n${snippetStart}`);
+  });
+
+  test('a query that is missing or empty is rejected', async () => {
+    const app = createApp(cfg);
+    expect((await search(app, {})).status).toBe(400);
+    expect((await search(app, { query: '  ' })).status).toBe(400);
+  });
+
+  test('a limit that is not a positive whole number is rejected', async () => {
+    const app = createApp(cfg);
+    for (const limit of [0, -1, 1.5, 'three']) {
+      const res = await search(app, { query: 'docker', limit });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('limit');
+    }
+  });
 });

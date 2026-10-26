@@ -62,7 +62,7 @@ export const INDEX_FILE = path.join('.swarm-kg', 'index.json');
 const INDEX_VERSION = 1;
 
 interface IndexedSection {
-  /** The section as written in the note, heading included. */
+  /** The section (or one chunk of a long one) as written in the note, heading included. */
   text: string;
   vector: number[];
 }
@@ -107,6 +107,53 @@ export function splitSections(body: string): Array<{ heading: string; text: stri
     .filter(s => s.text !== '' && s.heading.toLowerCase() !== 'related notes');
 }
 
+/**
+ * Most characters of section text in one embed input. bge-large reads 512
+ * tokens and silently drops the rest; at roughly 3 to 4 characters a token
+ * this leaves room for the context prefix. Ollama's own truncation stays on
+ * as a backstop for token-dense text such as code.
+ */
+export const CHUNK_CHARS = 1500;
+
+/** Splits text into pieces of at most `max` characters, at whitespace where it can. */
+function hardSplit(text: string, max: number): string[] {
+  const pieces: string[] = [];
+  let rest = text.trim();
+  while (rest.length > max) {
+    const cut = rest.lastIndexOf(' ', max);
+    const at = cut > 0 ? cut : max;
+    pieces.push(rest.slice(0, at).trimEnd());
+    rest = rest.slice(at).trimStart();
+  }
+  if (rest) pieces.push(rest);
+  return pieces;
+}
+
+/**
+ * Splits a section too long to embed whole into chunks of at most
+ * CHUNK_CHARS, at paragraph breaks where it can. Every chunk after the first
+ * starts with the section's heading, so it still says where it came from.
+ */
+export function chunkSection(heading: string, text: string): string[] {
+  if (text.length <= CHUNK_CHARS) return [text];
+  const label = heading ? `## ${heading.substring(0, 100)}\n` : '';
+  const budget = CHUNK_CHARS - label.length;
+  const pieces = text.split(/\n\s*\n/).flatMap(p => hardSplit(p, budget));
+
+  const chunks: string[] = [];
+  let current = '';
+  for (const piece of pieces) {
+    if (current && current.length + 2 + piece.length > budget) {
+      chunks.push(current);
+      current = piece;
+    } else {
+      current = current ? `${current}\n\n${piece}` : piece;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.map((c, i) => (i === 0 || c.startsWith(label) ? c : label + c));
+}
+
 /** First line of prose in a text: not a heading, not blank. */
 function firstLine(text: string): string | undefined {
   return text
@@ -143,9 +190,9 @@ export function contextPrefix(ctx: {
   summary?: string;
 }): string {
   return [
-    `Note: ${ctx.title}`,
+    `Note: ${ctx.title.substring(0, 120)}`,
     ...(ctx.kind ? [`Kind: ${ctx.kind}`] : []),
-    ...(ctx.project ? [`Project: ${ctx.project}`] : []),
+    ...(ctx.project ? [`Project: ${ctx.project.substring(0, 80)}`] : []),
     ...(ctx.summary ? [`Summary: ${ctx.summary}`] : []),
   ].join('\n');
 }
@@ -222,7 +269,7 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
       summary: summaryLine(frontmatter, sections),
     });
     // A note with no body is still findable by its title and context.
-    const texts = sections.length > 0 ? sections.map(s => s.text) : [''];
+    const texts = sections.length > 0 ? sections.flatMap(s => chunkSection(s.heading, s.text)) : [''];
     const vectors = await embed(
       cfg.ollamaUrl,
       cfg.embedModel,
