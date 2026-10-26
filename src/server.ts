@@ -8,6 +8,7 @@ import { today, appendNote } from './vault';
 import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
+import { readNote } from './graph';
 import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
 
 interface WebhookPayload {
@@ -198,6 +199,20 @@ export function createApp(cfg: Config): Express {
       res.json({ query, results });
     } catch (err) {
       res.status(502).json({ error: `Search failed: ${String(err)}` });
+    }
+  });
+
+  // Recall: one note in full, by name.
+  app.get('/webhook/knowledge-graph/notes/:name', async (req, res) => {
+    try {
+      const note = await readNote(cfg.vaultPath, req.params.name);
+      if (!note) {
+        res.status(404).json({ error: `No note named "${req.params.name}"` });
+        return;
+      }
+      res.json(note);
+    } catch (err) {
+      res.status(500).json({ error: `Reading the note failed: ${String(err)}` });
     }
   });
 
