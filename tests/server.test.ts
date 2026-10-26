@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import * as http from 'http';
 import * as os from 'os';
@@ -12,13 +12,24 @@ import { Config, loadConfig } from '../src/config';
  * Mock Ollama: inspects the system prompt to decide which canned response to
  * return, mimicking how each agent gets a different reply.
  */
-function createMockOllama(state: { linkTargets: string[]; links: string[] }): http.Server {
+interface MockState {
+  linkTargets: string[];
+  links: string[];
+  /** How long each reply takes, so runs that overlap would interleave. */
+  delayMs: number;
+  /** The user prompt of every chat request, in the order they arrived. */
+  prompts: string[];
+}
+
+function createMockOllama(state: MockState): http.Server {
   return http.createServer((req, res) => {
     let body = '';
     req.on('data', c => (body += c));
-    req.on('end', () => {
+    req.on('end', async () => {
       const parsed = JSON.parse(body || '{}');
       const system: string = parsed.messages?.[0]?.content ?? '';
+      state.prompts.push(parsed.messages?.[1]?.content ?? '');
+      if (state.delayMs > 0) await new Promise(resolve => setTimeout(resolve, state.delayMs));
 
       let content: string;
       if (system.includes('documentation assistant')) {
@@ -93,7 +104,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   let mockPort: number;
   let vaultDir: string;
   let cfg: Config;
-  const mockState = { linkTargets: [] as string[], links: [] as string[] };
+  const mockState: MockState = { linkTargets: [], links: [], delayMs: 0, prompts: [] };
 
   beforeAll(async () => {
     mockServer = createMockOllama(mockState);
@@ -107,6 +118,8 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     vaultDir = await fs.mkdtemp(path.join(os.tmpdir(), 'swarm-e2e-'));
     mockState.linkTargets = [];
     mockState.links = ['[[existing-note]]'];
+    mockState.delayMs = 0;
+    mockState.prompts = [];
     cfg = {
       port: 0,
       vaultPath: vaultDir,
@@ -254,6 +267,55 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
 
     expect(res.body.linker.links_written).toBe(0);
     await expect(fs.access(evil)).rejects.toThrow();
+  });
+
+  test('captures sent while a run is in progress run one at a time, in arrival order', async () => {
+    const app = createApp({ ...cfg, researcher: true });
+    mockState.delayMs = 30;
+    const captures = ['first', 'second', 'third'].map(name => ({
+      ...PAYLOAD,
+      file_path: `src/${name}.py`,
+      description: `capture-${name}`,
+    }));
+
+    const accepted = [];
+    for (const capture of captures) {
+      const res = await request(app).post('/webhook/knowledge-graph/trigger').send(capture);
+      expect(res.status).toBe(202);
+      accepted.push(res.body);
+    }
+    const finished = await Promise.all(accepted.map(a => waitForRun(app, a.status_url)));
+
+    expect(finished.map(r => r.body.status)).toEqual(['complete', 'complete', 'complete']);
+    // Every Ollama call names its capture's description; one at a time means
+    // each capture's calls form one unbroken block, in the order they were sent.
+    const owners = mockState.prompts.map(p => /(?:Description|Context): (capture-\w+)/.exec(p)![1]);
+    const blocks = owners.filter((o, i) => i === 0 || owners[i - 1] !== o);
+    expect(blocks).toEqual(['capture-first', 'capture-second', 'capture-third']);
+  });
+
+  test('a capture queued behind a failing run still runs', async () => {
+    const app = createApp({ ...cfg, ollamaUrl: 'http://127.0.0.1:1' });
+    const first = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+    const second = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+
+    const runs = await Promise.all([first, second].map(a => waitForRun(app, a.body.status_url)));
+    expect(runs.map(r => r.body.status)).toEqual(['partial', 'partial']);
+  });
+
+  test('the console logs one line per finished run with its id, status and duration', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const app = createApp(cfg);
+      const accepted = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+      await waitForRun(app, accepted.body.status_url);
+
+      const lines = log.mock.calls.map(c => c.join(' ')).filter(l => l.includes(accepted.body.run_id));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(new RegExp(`${accepted.body.run_id} complete in \\d+\\.\\ds`));
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test('empty payload returns 400 with a helpful error', async () => {
