@@ -61,11 +61,11 @@ async function runSwarm(ctx: SwarmContext, cfg: Config): Promise<RunResult> {
   try {
     await writeSessionLog(ctx, cfg);
 
-    // Documenter and Researcher run in parallel. allSettled so one agent
-    // failing doesn't take down the other's note.
+    // Documenter and (when on) Researcher run in parallel. allSettled so one
+    // agent failing doesn't take down the other's note.
     const settled = await Promise.allSettled([
       runDocumenter(ctx, cfg),
-      runResearcher(ctx, cfg),
+      ...(cfg.researcher ? [runResearcher(ctx, cfg)] : []),
     ]);
 
     const notes: NoteResult[] = [];

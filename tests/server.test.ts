@@ -6,7 +6,7 @@ import * as path from 'path';
 import request from 'supertest';
 import { Express } from 'express';
 import { createApp } from '../src/server';
-import { Config } from '../src/config';
+import { Config, loadConfig } from '../src/config';
 
 /**
  * Mock Ollama: inspects the system prompt to decide which canned response to
@@ -113,6 +113,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
       ollamaUrl: `http://127.0.0.1:${mockPort}`,
       ollamaModel: 'mock-model',
       ollamaThink: false,
+      researcher: false,
     };
   });
 
@@ -147,8 +148,31 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     expect(res.body.status).toBe('complete');
     expect(res.body.file_path).toBe('src/auth/jwt.py');
     expect(res.body.language).toBe('python');
-    expect(res.body.notes).toHaveLength(2);
     expect(res.body.linker.status).toBe('success');
+  });
+
+  test('with the Researcher off (the default), a code capture writes only the Documenter note', async () => {
+    const res = await triggerAndWait(createApp(cfg), PAYLOAD);
+
+    expect(res.body.status).toBe('complete');
+    expect(res.body.notes).toHaveLength(1);
+    expect(res.body.notes[0].agent).toBe('documenter');
+    await expect(fs.readdir(path.join(vaultDir, 'research'))).rejects.toThrow();
+  });
+
+  test('the Researcher is off unless its setting is on', () => {
+    expect(loadConfig({}).researcher).toBe(false);
+    expect(loadConfig({ RESEARCHER_ENABLED: 'true' }).researcher).toBe(true);
+  });
+
+  test('with the Researcher on, a code capture writes a code note and a research note', async () => {
+    const res = await triggerAndWait(createApp({ ...cfg, researcher: true }), PAYLOAD);
+
+    expect(res.body.status).toBe('complete');
+    expect(res.body.notes.map((n: { agent: string }) => n.agent).sort()).toEqual([
+      'documenter',
+      'researcher',
+    ]);
   });
 
   test('writes a code note with required frontmatter', async () => {
@@ -162,8 +186,8 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     }
   });
 
-  test('writes a research note to research/', async () => {
-    await triggerAndWait(createApp(cfg), PAYLOAD);
+  test('with the Researcher on, writes a research note to research/', async () => {
+    await triggerAndWait(createApp({ ...cfg, researcher: true }), PAYLOAD);
 
     const files = await fs.readdir(path.join(vaultDir, 'research'));
     expect(files).toHaveLength(1);
@@ -277,7 +301,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
 
     try {
       const res = await triggerAndWait(
-        createApp({ ...cfg, ollamaUrl: `http://127.0.0.1:${flakyPort}` }),
+        createApp({ ...cfg, researcher: true, ollamaUrl: `http://127.0.0.1:${flakyPort}` }),
         PAYLOAD,
       );
 
