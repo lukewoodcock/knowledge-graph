@@ -33,7 +33,8 @@ export interface InjectionConfig {
   debug: boolean;
 }
 
-export const DEFAULT_SEARCH_URL = 'http://localhost:5678/webhook/knowledge-graph/search';
+/** Same setting and default as the MCP server and `npm run reindex`. */
+export const DEFAULT_SERVICE_URL = 'http://127.0.0.1:5678';
 /**
  * Measured with bge-large against ten typical code notes: the right note for
  * a related prompt scored 0.63 to 0.81, while unrelated prompts ("fix the
@@ -62,7 +63,7 @@ function score(v: string | undefined, fallback: number): number {
 
 export function loadInjectionConfig(env: NodeJS.ProcessEnv = process.env): InjectionConfig {
   return {
-    searchUrl: env.SWARM_KG_SEARCH_URL || DEFAULT_SEARCH_URL,
+    searchUrl: `${(env.SWARM_KG_SERVICE_URL || DEFAULT_SERVICE_URL).replace(/\/+$/, '')}/webhook/knowledge-graph/search`,
     disabled: env.SWARM_KG_DISABLE === '1',
     minScore: score(env.SWARM_KG_MIN_SCORE, DEFAULT_MIN_SCORE),
     maxNotes: int(env.SWARM_KG_MAX_NOTES, DEFAULT_MAX_NOTES),

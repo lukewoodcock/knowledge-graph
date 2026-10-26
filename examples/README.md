@@ -58,7 +58,7 @@ Set them in front of the command, for example
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SWARM_KG_SEARCH_URL` | `http://localhost:5678/webhook/knowledge-graph/search` | The service's search endpoint |
+| `SWARM_KG_SERVICE_URL` | `http://127.0.0.1:5678` | The service, as for the MCP server; the hook calls its `/webhook/knowledge-graph/search` |
 | `SWARM_KG_MIN_SCORE` | `0.6` | Relevance threshold: notes scoring below it are left out |
 | `SWARM_KG_MAX_NOTES` | `3` | Most notes added to one prompt |
 | `SWARM_KG_MAX_CONTEXT_CHARS` | `4000` | Most characters added, wrapper included; never more than 9,000, as Claude Code moves context over 10,000 characters to a file |

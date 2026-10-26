@@ -325,7 +325,7 @@ echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 128 tests, a couple of seconds, no Docker needed
+npm test             # vitest — 138 tests, a couple of seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
