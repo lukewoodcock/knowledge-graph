@@ -164,6 +164,68 @@ each memo with all its links, each named once:
 If the Linker or indexing fails, the memos are still written with their
 session links, `status` is `"partial"` and `errors` says what failed.
 
+### Save memos from Claude Code (/remember)
+
+The `/remember` skill has the agent in your session write the memos, so they
+carry the reasoning from the conversation rather than just the diff. With no
+argument it captures everything worth keeping since the last memo, one memo
+per distinct thing (a decision and a todo are two memos); with an argument,
+`/remember the deploy script`, just that. The agent picks each memo's kind,
+opens each memo with a paragraph of context (project, problem, files) so it
+reads on its own months later, keeps ADRs and scripts in full, and leaves out
+credentials, tokens and personal data. Then it tells you each memo's name and
+links.
+
+Wire it into a project by copying
+[`examples/skills/remember/`](examples/skills/remember/SKILL.md) into its
+`.claude/skills/` and replacing the `/ABSOLUTE/PATH/TO` placeholders (see
+[`examples/README.md`](examples/README.md#remember)).
+
+The skill hands the memos to `dist/remember.js`, which sends them to the memo
+endpoint, polls the run, and prints what was saved:
+
+```bash
+node dist/remember.js --session <session id> --project-dir <project root> < memos.json
+```
+
+```
+Saved 2 memo(s) to the graph for project url-shortener, session 2d27…:
+- 2026-10-26_URL_shortener_short_codes_are_the_base62_encoding_of_an_auto (decision)
+  links: [[2026-10-26_src_shorten.js]]
+- 2026-10-26_Add_rate_limiting_to_the_URL_shortener_create-link_endpoint_ (todo)
+  links: [[2026-10-26_src_shorten.js]]
+```
+
+- **Input**: on stdin, one memo, a JSON array of them, or `{"memos": [...]}`,
+  each `{kind, title, body, files?}`. The command stamps every memo with the
+  session id (the skill passes Claude Code's `${CLAUDE_SESSION_ID}`) and the
+  project, named from `--project-dir` (the skill passes `${CLAUDE_PROJECT_DIR}`)
+  exactly as the capture hook names it, so memos link to the session's code
+  captures.
+- **Exit code**: `0` saved (a partial run still lists its memos, then what
+  failed); `1` nothing saved, with the reason (a rejected field, the service
+  not running, bad JSON, no session id); `2` accepted but still queued when
+  the wait ran out, with the `--run <run_id>` command that picks it up again.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SWARM_KG_SERVICE_URL` | `http://127.0.0.1:5678` | The service |
+| `SWARM_KG_REMEMBER_WAIT_MS` | `100000` | How long to wait for the run before exiting with `2`; under the Bash tool's two-minute default timeout |
+
+Why a file rather than a heredoc: Claude Code's Bash check refuses, before any
+allow rule applies, a command whose text holds a brace followed by a quote
+("Contains brace with quote character"). Memo JSON always does, and so does
+most code a snippet memo keeps. A heredoc without braces is approved by the
+skill's `allowed-tools: Bash(node …/dist/remember.js *)`, and so is the `<`
+redirect from a file, so the skill has the agent write the memos with the
+Write tool to its scratchpad (no approval needed there) and redirect that file
+in. The capture hook skips files in the session's scratchpad, so the memos
+file never becomes a code capture.
+
+If you run Claude Code with the Bash sandbox, its commands can't reach a
+server on localhost by default; on macOS allow it with
+`sandbox.network.allowLocalBinding: true`.
+
 ### Who can reach the service
 
 There is no authentication, so the service listens on the loopback interface
@@ -323,7 +385,9 @@ It never gets in Claude's way: nothing on stdout, always exit 0, a 2s
 timeout per POST and a 5s hard deadline. It does nothing when
 `stop_hook_active` is true, when `SWARM_KG_DISABLE=1`, or when the session's
 `cwd` is inside `SWARM_KG_VAULT_PATH`, so Claude editing the vault can't
-feed the graph its own notes.
+feed the graph its own notes. Files inside the vault or the session's
+scratchpad (`scratchpad_dir` in the hook input) are never sent: the scratchpad
+holds temporary files, such as the memos file `/remember` writes.
 
 Wire it into a demo project:
 
@@ -384,7 +448,7 @@ echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 167 tests, a couple of seconds, no Docker needed
+npm test             # vitest — 182 tests, a couple of seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -399,6 +463,7 @@ src/
 ├── embedding-index.ts  # notes embedded by section, the index file, search
 ├── memos.ts            # memo validation, memo notes and their same-session links
 ├── reindex.ts          # npm run reindex: asks the service to rebuild the index
+├── remember.ts         # dist/remember.js: what /remember runs to send memos and report them
 ├── vault.ts            # safeTitle, frontmatter parsing and writing, file helpers
 ├── graph.ts            # one note by name, and the notes linked to and from it
 ├── agents/

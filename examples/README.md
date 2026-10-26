@@ -12,6 +12,34 @@ Copy or merge these into a project's `.claude/settings.json`, then replace the
 Both hooks can live in one settings file: merge the `hooks.UserPromptSubmit`
 entry next to `hooks.Stop`.
 
+## Skills
+
+Copy a skill's folder into the project's `.claude/skills/`, then replace its
+`/ABSOLUTE/PATH/TO` placeholders. Type `/` in Claude Code to check it's listed.
+
+| Skill | What it does |
+|-------|--------------|
+| [`skills/remember/`](skills/remember/SKILL.md) | `/remember [what]`: the agent in the session writes memos from the conversation and saves them to the graph |
+
+### /remember
+
+```bash
+mkdir -p /path/to/demo-project/.claude/skills
+cp -r examples/skills/remember /path/to/demo-project/.claude/skills/
+# then edit both /ABSOLUTE/PATH/TO placeholders in its SKILL.md:
+# the allowed-tools line and the command in step 4
+```
+
+Only you can run it (`disable-model-invocation`), since it writes to the vault.
+With no argument, the agent saves everything worth keeping since the last
+memo, one memo per distinct thing; with an argument (`/remember the deploy
+script`), just that. It writes the memos to a file in its scratchpad and sends
+them with `node dist/remember.js`, which `allowed-tools` pre-approves, so
+saving needs no permission prompt. The service must be running; set
+`SWARM_KG_SERVICE_URL` in the environment Claude Code starts in if it isn't on
+`http://127.0.0.1:5678`. See the [README](../README.md#save-memos-from-claude-code-remember)
+for how it works.
+
 ## Context injection
 
 Off unless you add its entry to a project's settings, and switched off again by

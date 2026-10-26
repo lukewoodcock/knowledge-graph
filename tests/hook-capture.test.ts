@@ -137,4 +137,18 @@ describe('capture hook entrypoint', () => {
     expect(received[0].project).toBe('loose-files');
     expect(received[0].session_id).toBe('sess-7');
   });
+
+  test("edits in the session's scratchpad are not code captures, so /remember's memo file never becomes a note", async () => {
+    const repo = await makeRepo(tmp, 'project-a');
+    const scratchpad = path.join(tmp, 'scratchpad');
+    await fs.mkdir(scratchpad);
+    const transcript = await writeTranscript(tmp, [path.join(repo, 'greet.ts'), path.join(scratchpad, 'memos.json')]);
+
+    await runHook(
+      { session_id: 'sess-1', transcript_path: transcript, cwd: repo, scratchpad_dir: scratchpad, hook_event_name: 'Stop' },
+      { SWARM_KG_URL: url },
+    );
+
+    expect(received.map(c => c.file_path)).toEqual(['greet.ts']);
+  });
 }, 20_000);

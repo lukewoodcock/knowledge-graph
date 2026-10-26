@@ -7,6 +7,8 @@ export interface StopHookInput {
   session_id?: string;
   transcript_path?: string;
   cwd?: string;
+  /** The session's scratchpad (Claude Code 2.1.257+): temporary files, never project work. */
+  scratchpad_dir?: string;
   hook_event_name?: string;
   stop_hook_active?: boolean;
 }
@@ -109,17 +111,24 @@ export function displayPath(filePath: string, cwd?: string): string {
  * One payload per changed file (deduped, capped at cfg.maxFiles), all
  * sharing the turn's prompt as the description. `diffs` maps a file path to
  * its git diff; files without one fall back to the tool input's new text.
- * Files inside the vault are left out, like the cwd guard. Each payload
- * carries the session id and project when they're known.
+ * Files inside the vault or the session's scratchpad are left out. Each
+ * payload carries the session id and project when they're known.
  */
 export function buildPayloads(
   turn: Turn,
-  opts: { cwd?: string; diffs?: Map<string, string>; cfg: HookConfig; sessionId?: string; project?: string },
+  opts: {
+    cwd?: string;
+    diffs?: Map<string, string>;
+    cfg: HookConfig;
+    sessionId?: string;
+    project?: string;
+    scratchpadDir?: string;
+  },
 ): WebhookPayload[] {
-  const { cwd, diffs, cfg, sessionId, project } = opts;
+  const { cwd, diffs, cfg, sessionId, project, scratchpadDir } = opts;
   const description = truncate(turn.prompt, cfg.maxDescriptionChars);
 
-  return changedFiles(turn, cfg)
+  return changedFiles(turn, cfg, scratchpadDir)
     .map((e: FileEdit) => ({
       file_path: displayPath(e.filePath, cwd),
       language: languageFromPath(e.filePath),
@@ -130,9 +139,14 @@ export function buildPayloads(
     }));
 }
 
-/** The files a turn changed that we'd report on, before any diffs are fetched. */
-export function changedFiles(turn: Turn, cfg: HookConfig): FileEdit[] {
+/**
+ * The files a turn changed that we'd report on, before any diffs are fetched.
+ * Files in the session's scratchpad are left out: they're temporary, such as
+ * the memos file the /remember skill writes there before sending it.
+ */
+export function changedFiles(turn: Turn, cfg: HookConfig, scratchpadDir?: string): FileEdit[] {
   return uniqueFiles(turn.edits)
     .filter(e => !(cfg.vaultPath && isInside(e.filePath, cfg.vaultPath)))
+    .filter(e => !(scratchpadDir && isInside(e.filePath, scratchpadDir)))
     .slice(0, cfg.maxFiles);
 }

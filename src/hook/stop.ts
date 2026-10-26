@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const turn = extractLastTurn(await fs.readFile(input.transcript_path!, 'utf8'));
   if (!turn) return log('skip: no user prompt in transcript');
 
-  const files = changedFiles(turn, cfg);
+  const files = changedFiles(turn, cfg, input.scratchpad_dir);
   if (files.length === 0) return log('skip: no files edited this turn');
 
   const diffs = new Map<string, string>();
@@ -37,7 +37,14 @@ async function main(): Promise<void> {
     project = await naming;
   }
 
-  const payloads = buildPayloads(turn, { cwd: input.cwd, diffs, cfg, sessionId: input.session_id, project });
+  const payloads = buildPayloads(turn, {
+    cwd: input.cwd,
+    diffs,
+    cfg,
+    sessionId: input.session_id,
+    project,
+    scratchpadDir: input.scratchpad_dir,
+  });
   const results = await Promise.all(payloads.map(p => postPayload(cfg.url, p, cfg.timeoutMs)));
   results.forEach(r => log(r));
 }
