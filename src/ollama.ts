@@ -39,3 +39,26 @@ export async function chat(
 
   return extractContent(await res.json());
 }
+
+/**
+ * Embeds texts with Ollama's /api/embed, returning one vector per input, in
+ * order. Throws on non-2xx responses or a reply without one vector per input.
+ */
+export async function embed(baseUrl: string, model: string, input: string[]): Promise<number[][]> {
+  if (input.length === 0) return [];
+  const res = await fetch(`${baseUrl}/api/embed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, input }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Ollama embed request failed: HTTP ${res.status} ${res.statusText}`);
+  }
+
+  const embeddings = ((await res.json()) as { embeddings?: unknown }).embeddings;
+  if (!Array.isArray(embeddings) || embeddings.length !== input.length) {
+    throw new Error(`Ollama embed reply did not hold ${input.length} embedding(s)`);
+  }
+  return embeddings as number[][];
+}

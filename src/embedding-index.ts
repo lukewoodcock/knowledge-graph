@@ -1,0 +1,338 @@
+import { promises as fs } from 'fs';
+import * as path from 'path';
+import { createHash } from 'crypto';
+import { Config } from './config';
+import { embed } from './ollama';
+import { listMarkdownFiles, parseNote } from './vault';
+
+/**
+ * The embedding index: every note's sections embedded with Ollama, kept in
+ * one file inside the vault. The notes stay the only source of truth
+ * (ADR 0001): the file can be deleted at any time and rebuilt from them.
+ */
+export interface EmbeddingIndex {
+  /**
+   * Embeds the given notes (absolute paths, or relative to the vault) when
+   * they are missing from the index or have changed since; a path whose file
+   * is gone is dropped from the index.
+   */
+  indexNotes(notePaths: string[]): Promise<void>;
+  /** Indexes every note that is missing or changed, and drops deleted ones. */
+  sync(): Promise<IndexSummary>;
+  /** Throws the index away and embeds every note again. */
+  rebuild(): Promise<IndexSummary>;
+  /** Ranks notes by their best section's similarity to the query. */
+  search(query: string, options?: SearchOptions): Promise<SearchHit[]>;
+}
+
+export interface IndexSummary {
+  /** Notes in the index afterwards. */
+  notes: number;
+  /** Notes embedded by this call. */
+  embedded: number;
+  /** Notes dropped because their file is gone. */
+  removed: number;
+}
+
+export interface SearchOptions {
+  /** Most results to return; DEFAULT_SEARCH_LIMIT when left out. */
+  limit?: number;
+}
+
+export interface SearchHit {
+  /** The note's name: its file name without `.md`, as a link would name it. */
+  name: string;
+  /** Path relative to the vault root, e.g. "code/2026-06-10_jwt.py.md". */
+  path: string;
+  /** The memo's kind, else the note's type (code, research...), else null. */
+  kind: string | null;
+  project: string | null;
+  /** The best-matching section, shortened to SNIPPET_LENGTH characters. */
+  snippet: string;
+  /** Cosine similarity of the best-matching section to the query. */
+  score: number;
+}
+
+export const DEFAULT_SEARCH_LIMIT = 5;
+export const MAX_SEARCH_LIMIT = 50;
+const SNIPPET_LENGTH = 300;
+
+/** Where the index lives, relative to the vault root. Obsidian hides dot folders. */
+export const INDEX_FILE = path.join('.swarm-kg', 'index.json');
+const INDEX_VERSION = 1;
+
+interface IndexedSection {
+  /** The section as written in the note, heading included. */
+  text: string;
+  vector: number[];
+}
+
+interface IndexedNote {
+  hash: string;
+  kind: string | null;
+  project: string | null;
+  /** True for the Researcher's notes, which recall leaves out. */
+  research: boolean;
+  sections: IndexedSection[];
+}
+
+interface IndexFile {
+  version: number;
+  model: string;
+  /** Keyed by path relative to the vault root, "/"-separated. */
+  notes: Record<string, IndexedNote>;
+}
+
+/** Session logs are never recalled, and dot folders (.obsidian, .trash) aren't notes. */
+function isIndexable(relPath: string): boolean {
+  return !relPath.startsWith('logs/') && !relPath.split('/').some(seg => seg.startsWith('.'));
+}
+
+/**
+ * Splits a note body into its `##` sections. Text before the first `##`
+ * heading is a section of its own. `##` lines inside code fences don't
+ * start a section, and the Linker's "Related Notes" list is left out: link
+ * names would make the note match queries about the notes it links to.
+ */
+export function splitSections(body: string): Array<{ heading: string; text: string }> {
+  const sections: Array<{ heading: string; lines: string[] }> = [{ heading: '', lines: [] }];
+  let inFence = false;
+  for (const line of body.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    if (!inFence && /^## /.test(line)) sections.push({ heading: line.slice(3).trim(), lines: [] });
+    sections[sections.length - 1].lines.push(line);
+  }
+  return sections
+    .map(s => ({ heading: s.heading, text: s.lines.join('\n').trim() }))
+    .filter(s => s.text !== '' && s.heading.toLowerCase() !== 'related notes');
+}
+
+/** First line of prose in a text: not a heading, not blank. */
+function firstLine(text: string): string | undefined {
+  return text
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .find(l => l !== '' && !l.startsWith('#'));
+}
+
+/**
+ * The one-line summary in front of every section: the frontmatter's
+ * `summary` if the note has one, else the first line of its "Summary"
+ * section, else the first line of prose in the note.
+ */
+function summaryLine(
+  frontmatter: Record<string, string>,
+  sections: Array<{ heading: string; text: string }>,
+): string | undefined {
+  const line =
+    frontmatter.summary ||
+    firstLine(sections.find(s => s.heading.toLowerCase() === 'summary')?.text ?? '') ||
+    firstLine(sections.map(s => s.text).join('\n'));
+  return line?.substring(0, 200);
+}
+
+/**
+ * The context prefix put in front of each section before it's embedded
+ * (contextual chunks), so a section like "Key Points" still matches
+ * questions about the note's topic.
+ */
+export function contextPrefix(ctx: {
+  title: string;
+  kind: string | null;
+  project: string | null;
+  summary?: string;
+}): string {
+  return [
+    `Note: ${ctx.title}`,
+    ...(ctx.kind ? [`Kind: ${ctx.kind}`] : []),
+    ...(ctx.project ? [`Project: ${ctx.project}`] : []),
+    ...(ctx.summary ? [`Summary: ${ctx.summary}`] : []),
+  ].join('\n');
+}
+
+function cosine(a: number[], b: number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return na === 0 || nb === 0 ? 0 : dot / Math.sqrt(na * nb);
+}
+
+function snippet(text: string): string {
+  return text.length <= SNIPPET_LENGTH ? text : text.substring(0, SNIPPET_LENGTH - 1).trimEnd() + '…';
+}
+
+function emptyIndex(model: string): IndexFile {
+  return { version: INDEX_VERSION, model, notes: {} };
+}
+
+export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
+  const indexPath = path.join(cfg.vaultPath, INDEX_FILE);
+  let loaded: IndexFile | undefined;
+  // Every operation runs after the previous one settles, so a run indexing
+  // its notes, a startup sync and a search never interleave on the file.
+  let queue: Promise<unknown> = Promise.resolve();
+
+  function exclusive<T>(op: () => Promise<T>): Promise<T> {
+    const result = queue.then(op);
+    queue = result.catch(() => undefined);
+    return result;
+  }
+
+  /** The index file, or an empty index if it's missing, unreadable or for another model. */
+  async function load(): Promise<IndexFile> {
+    if (loaded) return loaded;
+    try {
+      const parsed = JSON.parse(await fs.readFile(indexPath, 'utf8')) as IndexFile;
+      const usable = parsed.version === INDEX_VERSION && parsed.model === cfg.embedModel && parsed.notes;
+      loaded = usable ? parsed : emptyIndex(cfg.embedModel);
+    } catch {
+      loaded = emptyIndex(cfg.embedModel);
+    }
+    return loaded;
+  }
+
+  /** Writes the index atomically, so a crash mid-write can't leave half a file. */
+  async function save(index: IndexFile): Promise<void> {
+    await fs.mkdir(path.dirname(indexPath), { recursive: true });
+    const tmp = `${indexPath}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(index), 'utf8');
+    await fs.rename(tmp, indexPath);
+  }
+
+  function relative(notePath: string): string {
+    const abs = path.resolve(cfg.vaultPath, notePath);
+    return path.relative(cfg.vaultPath, abs).split(path.sep).join('/');
+  }
+
+  async function embedNote(relPath: string, content: string, hash: string): Promise<IndexedNote> {
+    const { frontmatter, body } = parseNote(content);
+    const name = path.basename(relPath, '.md');
+    const kind = frontmatter.kind || frontmatter.type || null;
+    const project = frontmatter.project || null;
+    const sections = splitSections(body);
+    const prefix = contextPrefix({
+      title: frontmatter.title || name,
+      kind,
+      project,
+      summary: summaryLine(frontmatter, sections),
+    });
+    // A note with no body is still findable by its title and context.
+    const texts = sections.length > 0 ? sections.map(s => s.text) : [''];
+    const vectors = await embed(
+      cfg.ollamaUrl,
+      cfg.embedModel,
+      texts.map(t => (t ? `${prefix}\n\n${t}` : prefix)),
+    );
+    return {
+      hash,
+      kind,
+      project,
+      research: frontmatter.type === 'research' || relPath.startsWith('research/'),
+      sections: texts.map((text, i) => ({ text, vector: vectors[i] })),
+    };
+  }
+
+  /**
+   * Brings one note's entry up to date. Returns 'embedded', 'removed' or
+   * 'unchanged'.
+   */
+  async function refresh(index: IndexFile, relPath: string): Promise<'embedded' | 'removed' | 'unchanged'> {
+    let content: string;
+    try {
+      content = await fs.readFile(path.join(cfg.vaultPath, relPath), 'utf8');
+    } catch {
+      if (!(relPath in index.notes)) return 'unchanged';
+      delete index.notes[relPath];
+      return 'removed';
+    }
+    const hash = createHash('sha256').update(content).digest('hex');
+    if (index.notes[relPath]?.hash === hash) return 'unchanged';
+    index.notes[relPath] = await embedNote(relPath, content, hash);
+    return 'embedded';
+  }
+
+  /** Refreshes every note in the vault into `index` and drops entries for deleted notes. */
+  async function syncInto(index: IndexFile): Promise<IndexSummary> {
+    const relPaths = (await listMarkdownFiles(cfg.vaultPath)).filter(isIndexable);
+    const present = new Set(relPaths);
+    let embedded = 0;
+    let removed = 0;
+    for (const relPath of Object.keys(index.notes)) {
+      if (!present.has(relPath)) {
+        delete index.notes[relPath];
+        removed++;
+      }
+    }
+    for (const relPath of relPaths) {
+      if ((await refresh(index, relPath)) === 'embedded') embedded++;
+    }
+    return { notes: Object.keys(index.notes).length, embedded, removed };
+  }
+
+  return {
+    indexNotes: notePaths =>
+      exclusive(async () => {
+        const index = await load();
+        let changed = false;
+        for (const relPath of notePaths.map(relative).filter(isIndexable)) {
+          if ((await refresh(index, relPath)) !== 'unchanged') changed = true;
+        }
+        if (changed) await save(index);
+      }),
+
+    sync: () =>
+      exclusive(async () => {
+        const index = await load();
+        const summary = await syncInto(index);
+        if (summary.embedded > 0 || summary.removed > 0) await save(index);
+        return summary;
+      }),
+
+    rebuild: () =>
+      exclusive(async () => {
+        // Built aside and swapped in only once complete, so a failed rebuild
+        // leaves the previous index in place.
+        const fresh = emptyIndex(cfg.embedModel);
+        const summary = await syncInto(fresh);
+        await save(fresh);
+        loaded = fresh;
+        return { ...summary, removed: 0 };
+      }),
+
+    search: (query, options = {}) =>
+      exclusive(async () => {
+        const index = await load();
+        const limit = Math.min(options.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+        const [queryVector] = await embed(cfg.ollamaUrl, cfg.embedModel, [query]);
+
+        const hits: SearchHit[] = [];
+        for (const [relPath, note] of Object.entries(index.notes)) {
+          if (note.research) continue;
+          let best: IndexedSection | undefined;
+          let bestScore = -Infinity;
+          for (const section of note.sections) {
+            const score = cosine(queryVector, section.vector);
+            if (score > bestScore) {
+              bestScore = score;
+              best = section;
+            }
+          }
+          if (!best) continue;
+          hits.push({
+            name: path.basename(relPath, '.md'),
+            path: relPath,
+            kind: note.kind,
+            project: note.project,
+            snippet: snippet(best.text),
+            score: bestScore,
+          });
+        }
+        return hits.sort((a, b) => b.score - a.score).slice(0, limit);
+      }),
+  };
+}

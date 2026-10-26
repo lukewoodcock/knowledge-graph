@@ -7,6 +7,7 @@ import { today, appendNote } from './vault';
 import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
+import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
 
 interface WebhookPayload {
   file_path?: string;
@@ -64,7 +65,7 @@ type Run = { status: 'running'; run_id: string } | (RunResult & { run_id: string
 // Runs are kept in memory only; enough to poll a recent trigger.
 const MAX_RUNS = 100;
 
-async function runSwarm(ctx: SwarmContext, cfg: Config): Promise<RunResult> {
+async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
   try {
     await writeSessionLog(ctx, cfg);
 
@@ -84,6 +85,15 @@ async function runSwarm(ctx: SwarmContext, cfg: Config): Promise<RunResult> {
 
     const linker = await runLinker(notes, ctx.language, ctx.description, cfg);
 
+    // After the Linker, so the indexed content is the note as finally
+    // written. A note that fails to index is still in the vault, and the
+    // next startup sync picks it up.
+    try {
+      await index.indexNotes(notes.map(n => n.notePath));
+    } catch (err) {
+      errors.push(`index: ${String(err)}`);
+    }
+
     return {
       status: errors.length === 0 ? 'complete' : 'partial',
       session_date: ctx.today,
@@ -102,6 +112,18 @@ export function createApp(cfg: Config): Express {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   const runs = new Map<string, Run>();
+  const index = createEmbeddingIndex(cfg);
+
+  // Notes added or edited by hand while the service was down get indexed
+  // now. Searches and runs queue behind this inside the index.
+  void index.sync().then(
+    s => {
+      if (s.embedded > 0 || s.removed > 0) {
+        console.log(`index: ${s.notes} notes, ${s.embedded} embedded, ${s.removed} removed`);
+      }
+    },
+    err => console.error(`index: startup sync failed: ${String(err)}`),
+  );
 
   app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok' });
@@ -136,7 +158,7 @@ export function createApp(cfg: Config): Express {
     if (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value!);
 
     const started = Date.now();
-    void runSwarm(ctx, cfg).then(result => {
+    void runSwarm(ctx, cfg, index).then(result => {
       runs.set(runId, { ...result, run_id: runId });
       const secs = ((Date.now() - started) / 1000).toFixed(1);
       console.log(`run ${runId} ${result.status} in ${secs}s (${ctx.filePath || ctx.description})`);
@@ -147,6 +169,28 @@ export function createApp(cfg: Config): Express {
       run_id: runId,
       status_url: `/webhook/knowledge-graph/runs/${runId}`,
     });
+  });
+
+  // Recall: ranked notes for a query. Research notes are never returned.
+  app.post('/webhook/knowledge-graph/search', async (req, res) => {
+    const body = (req.body ?? {}) as { query?: unknown; limit?: unknown };
+    const query = optionalString(body.query);
+    if (!query) {
+      res.status(400).json({ error: 'Payload must include a non-empty query' });
+      return;
+    }
+    const limit = body.limit;
+    if (limit !== undefined && !(Number.isInteger(limit) && (limit as number) > 0)) {
+      res.status(400).json({ error: `limit must be a whole number from 1 to ${MAX_SEARCH_LIMIT}` });
+      return;
+    }
+
+    try {
+      const results = await index.search(query, { limit: limit as number | undefined });
+      res.json({ query, results });
+    } catch (err) {
+      res.status(502).json({ error: `Search failed: ${String(err)}` });
+    }
   });
 
   app.get('/webhook/knowledge-graph/runs/:id', (req, res) => {
