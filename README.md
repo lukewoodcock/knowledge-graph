@@ -50,7 +50,10 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/trigger \
 ```
 
 Payload: at least one of `file_path` / `description` is required; `language`
-and `changed_code` are optional.
+and `changed_code` are optional. So are `session_id` (the Claude Code session)
+and `project` (the codebase, named after its git repository): when sent, they
+are recorded as `session` and `project` in the frontmatter of every note the
+run writes, and when left out those fields are simply absent.
 
 The service replies `202 Accepted` straight away and the agents run in the
 background:
@@ -96,7 +99,11 @@ since your last prompt (Edit / Write / MultiEdit / NotebookEdit calls that
 succeeded), and POSTs **one trigger per changed file** to the webhook. Each
 one has your prompt as `description`, `language` from the file extension,
 and `changed_code` from `git diff HEAD -- <file>`, or from the tool input when
-the file isn't tracked; both are capped at 4 KB. A turn with no edits sends nothing.
+the file isn't tracked; both are capped at 4 KB. Every one also carries the
+`session_id` Claude Code gave the hook and the `project`: the name of the git
+repository the session's `cwd` is in (the main repository's name inside a
+linked worktree), or the `cwd` folder's name outside one. A turn with no edits
+sends nothing.
 
 It never gets in Claude's way: nothing on stdout, always exit 0, a 2s
 timeout per POST and a 5s hard deadline. It does nothing when
