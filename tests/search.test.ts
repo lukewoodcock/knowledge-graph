@@ -6,7 +6,7 @@ import * as path from 'path';
 import request from 'supertest';
 import { Express } from 'express';
 import { createApp } from '../src/server';
-import { Config } from '../src/config';
+import { Config, loadConfig } from '../src/config';
 import {
   close,
   createMockOllama,
@@ -42,12 +42,14 @@ describe('search over the embedding index (end-to-end)', () => {
     vaultDir = await fs.mkdtemp(path.join(os.tmpdir(), 'swarm-search-'));
     resetMockOllamaState(mockState);
     cfg = {
+      host: '127.0.0.1',
       port: 0,
       vaultPath: vaultDir,
       ollamaUrl: `http://127.0.0.1:${mockPort}`,
       ollamaModel: 'mock-model',
       ollamaThink: false,
       embedModel: 'mock-embed',
+      researcher: false,
     };
   });
 
@@ -124,6 +126,11 @@ describe('search over the embedding index (end-to-end)', () => {
         'Implements JWT refresh.',
       ].join('\n'),
     );
+  });
+
+  test('the embedding model is a setting, bge-large by default', () => {
+    expect(loadConfig({}).embedModel).toBe('bge-large');
+    expect(loadConfig({ OLLAMA_EMBED_MODEL: 'all-minilm' }).embedModel).toBe('all-minilm');
   });
 
   test('notes and queries are embedded with the configured model', async () => {
@@ -204,9 +211,10 @@ describe('search over the embedding index (end-to-end)', () => {
   });
 
   test("research notes never appear in search results, even when they're the best match", async () => {
-    const app = createApp(cfg);
+    const app = createApp({ ...cfg, researcher: true });
     // The run writes a code note and a research note, both about JWT.
-    await triggerAndWait(app, PAYLOAD);
+    const run = await triggerAndWait(app, PAYLOAD);
+    expect(run.body.notes.map((n: { agent: string }) => n.agent)).toContain('researcher');
     await writeVaultNote('research/by-hand.md', [
       '---', 'title: "JWT"', 'type: "research"', '---', '', '## Overview', 'jwt jwt jwt',
     ].join('\n'));

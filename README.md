@@ -2,10 +2,11 @@
 
 A local AI agent swarm that builds a personal knowledge graph in your
 **Obsidian** vault, powered by **Ollama** (local LLMs). POST your working
-context from the IDE and three agents run automatically:
+context from the IDE and the agents run automatically:
 
 - **Documenter** — summarises what you're building into a structured note (`vault/code/`)
-- **Researcher** — generates a best-practices/pitfalls note (`vault/research/`)
+- **Researcher** — generates a best-practices/pitfalls note (`vault/research/`).
+  Off by default; set `RESEARCHER_ENABLED=true` to turn it on
 - **Linker** — connects new notes to existing ones with `[[wikilinks]]`
 
 This is a TypeScript service — a migration of the original
@@ -16,9 +17,11 @@ unchanged**: existing IDE integrations and curl commands work as-is.
 ```
 IDE ──POST /webhook/knowledge-graph/trigger──►  swarm-kg service
                                                      │
+                                              queue (one run at a time)
+                                                     │
                                           ┌──────────┴──────────┐
                                           ▼                     ▼   (parallel)
-                                     Documenter            Researcher
+                                     Documenter            Researcher (optional)
                                           └──────────┬──────────┘
                                                      ▼
                                                   Linker
@@ -87,9 +90,29 @@ curl -s http://localhost:5678/webhook/knowledge-graph/runs/3f2c… | jq .
 
 Run status is kept in memory (last 100 runs), so it's lost on restart.
 
+Captures go through one in-process queue and run one at a time, in the order
+they arrived, so several runs never compete for one local Ollama. A queued
+run reports `"running"` until it has finished. The service's console logs one
+line per finished run, with its id, status and how long the run took:
+
+```
+run 3f2c… complete in 23.4s (src/auth/jwt.py)
+```
+
+With the Researcher off (the default), a code capture writes only the
+Documenter's note and `notes` has one entry; the run is still `"complete"`.
+
 If one agent fails, the run degrades gracefully: `status` becomes `"partial"`,
 the surviving note is still written and linked, and an `errors` array explains
 what failed.
+
+### Who can reach the service
+
+There is no authentication, so the service listens on the loopback interface
+(`127.0.0.1`) by default: only your own machine can send captures or read
+notes. `HOST` changes the bind address. `docker compose` publishes the port
+on the host's loopback only (`127.0.0.1:5678`), and sets `HOST=0.0.0.0` inside
+the container so the published port can reach the service.
 
 ### Search the graph
 
@@ -203,7 +226,7 @@ echo '{"hook_event_name":"Stop","stop_hook_active":false,
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 73 tests, <1s, no Docker needed
+npm test             # vitest — 112 tests, <1s, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -247,6 +270,8 @@ runs typecheck, tests, and a production build on every PR.
 | `OLLAMA_MODEL` | `qwen3.5:9b` | Model for all agents (`qwen2.5-coder:7b`, `llama3.2`, ...) |
 | `OLLAMA_EMBED_MODEL` | `bge-large` | Ollama embedding model for search. Changing it re-embeds every note |
 | `OLLAMA_THINK` | `false` | Let thinking models reason first. ~20x slower on a 9B model |
+| `RESEARCHER_ENABLED` | `false` | `true` also writes a research note for every code capture |
+| `HOST` | `127.0.0.1` | Address the service listens on (compose sets `0.0.0.0` inside the container and publishes on loopback) |
 | `PORT` | `5678` | Webhook service port |
 
 ## Changes from the n8n version

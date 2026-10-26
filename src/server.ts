@@ -1,4 +1,5 @@
 import express, { Express } from 'express';
+import * as http from 'http';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { Config } from './config';
@@ -69,11 +70,11 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
   try {
     await writeSessionLog(ctx, cfg);
 
-    // Documenter and Researcher run in parallel. allSettled so one agent
-    // failing doesn't take down the other's note.
+    // Documenter and (when on) Researcher run in parallel. allSettled so one
+    // agent failing doesn't take down the other's note.
     const settled = await Promise.allSettled([
       runDocumenter(ctx, cfg),
-      runResearcher(ctx, cfg),
+      ...(cfg.researcher ? [runResearcher(ctx, cfg)] : []),
     ]);
 
     const notes: NoteResult[] = [];
@@ -125,6 +126,11 @@ export function createApp(cfg: Config): Express {
     err => console.error(`index: startup sync failed: ${String(err)}`),
   );
 
+  // Every capture joins one queue and runs one at a time, in arrival order,
+  // so several runs never compete for one local Ollama. runSwarm never
+  // rejects, so a failed run can't stall the runs behind it.
+  let queue: Promise<void> = Promise.resolve();
+
   app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok' });
   });
@@ -157,8 +163,10 @@ export function createApp(cfg: Config): Express {
     // Map iterates in insertion order, so the first key is the oldest run.
     if (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value!);
 
-    const started = Date.now();
-    void runSwarm(ctx, cfg, index).then(result => {
+    // Queued runs report 'running' too, so the status contract is unchanged.
+    queue = queue.then(async () => {
+      const started = Date.now();
+      const result = await runSwarm(ctx, cfg, index);
       runs.set(runId, { ...result, run_id: runId });
       const secs = ((Date.now() - started) / 1000).toFixed(1);
       console.log(`run ${runId} ${result.status} in ${secs}s (${ctx.filePath || ctx.description})`);
@@ -214,4 +222,13 @@ export function createApp(cfg: Config): Express {
   });
 
   return app;
+}
+
+/** Creates the app and listens on cfg.host:cfg.port; resolves once it is listening. */
+export function startServer(cfg: Config): Promise<http.Server> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(createApp(cfg));
+    server.once('error', reject);
+    server.listen(cfg.port, cfg.host, () => resolve(server));
+  });
 }

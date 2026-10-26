@@ -18,12 +18,16 @@ export interface MockOllamaState {
   linkTargets: string[];
   /** Links the Linker reply suggests for each of them. */
   links: string[];
+  /** How long each chat reply takes, so runs that overlap would interleave. */
+  delayMs: number;
+  /** The user prompt of every chat request, in the order they arrived. */
+  prompts: string[];
   /** Every embed request received, in order. */
   embedCalls: Array<{ model: string; input: string[] }>;
 }
 
 export function createMockOllamaState(): MockOllamaState {
-  return { linkTargets: [], links: ['[[existing-note]]'], embedCalls: [] };
+  return { linkTargets: [], links: ['[[existing-note]]'], delayMs: 0, prompts: [], embedCalls: [] };
 }
 
 /** Resets the state in place, so a shared mock starts each test clean. */
@@ -54,7 +58,7 @@ export function createMockOllama(state: MockOllamaState): http.Server {
   return http.createServer((req, res) => {
     let body = '';
     req.on('data', c => (body += c));
-    req.on('end', () => {
+    req.on('end', async () => {
       if (req.url === '/api/embed') {
         replyToEmbed(state, body, res);
         return;
@@ -62,6 +66,8 @@ export function createMockOllama(state: MockOllamaState): http.Server {
 
       const parsed = JSON.parse(body || '{}');
       const system: string = parsed.messages?.[0]?.content ?? '';
+      state.prompts.push(parsed.messages?.[1]?.content ?? '');
+      if (state.delayMs > 0) await new Promise(resolve => setTimeout(resolve, state.delayMs));
 
       let content: string;
       if (system.includes('documentation assistant')) {

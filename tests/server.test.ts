@@ -1,11 +1,11 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import request from 'supertest';
-import { createApp } from '../src/server';
-import { Config } from '../src/config';
+import { createApp, startServer } from '../src/server';
+import { Config, loadConfig } from '../src/config';
 import {
   close,
   createMockOllama,
@@ -34,12 +34,14 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     vaultDir = await fs.mkdtemp(path.join(os.tmpdir(), 'swarm-e2e-'));
     resetMockOllamaState(mockState);
     cfg = {
+      host: '127.0.0.1',
       port: 0,
       vaultPath: vaultDir,
       ollamaUrl: `http://127.0.0.1:${mockPort}`,
       ollamaModel: 'mock-model',
       ollamaThink: false,
       embedModel: 'mock-embed',
+      researcher: false,
     };
   });
 
@@ -74,8 +76,31 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     expect(res.body.status).toBe('complete');
     expect(res.body.file_path).toBe('src/auth/jwt.py');
     expect(res.body.language).toBe('python');
-    expect(res.body.notes).toHaveLength(2);
     expect(res.body.linker.status).toBe('success');
+  });
+
+  test('with the Researcher off (the default), a code capture writes only the Documenter note', async () => {
+    const res = await triggerAndWait(createApp(cfg), PAYLOAD);
+
+    expect(res.body.status).toBe('complete');
+    expect(res.body.notes).toHaveLength(1);
+    expect(res.body.notes[0].agent).toBe('documenter');
+    await expect(fs.readdir(path.join(vaultDir, 'research'))).rejects.toThrow();
+  });
+
+  test('the Researcher is off unless its setting is on', () => {
+    expect(loadConfig({}).researcher).toBe(false);
+    expect(loadConfig({ RESEARCHER_ENABLED: 'true' }).researcher).toBe(true);
+  });
+
+  test('with the Researcher on, a code capture writes a code note and a research note', async () => {
+    const res = await triggerAndWait(createApp({ ...cfg, researcher: true }), PAYLOAD);
+
+    expect(res.body.status).toBe('complete');
+    expect(res.body.notes.map((n: { agent: string }) => n.agent).sort()).toEqual([
+      'documenter',
+      'researcher',
+    ]);
   });
 
   test('writes a code note with required frontmatter', async () => {
@@ -102,7 +127,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   }
 
   test('a code capture with session and project records both in every note it writes', async () => {
-    await triggerAndWait(createApp(cfg), { ...PAYLOAD, session_id: 'sess-123', project: 'project-a' });
+    await triggerAndWait(createApp({ ...cfg, researcher: true }), { ...PAYLOAD, session_id: 'sess-123', project: 'project-a' });
 
     const frontmatters = await runNoteFrontmatters();
     expect(frontmatters).toHaveLength(2);
@@ -113,7 +138,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   });
 
   test('a code capture without session and project still works, and the fields are absent', async () => {
-    const res = await triggerAndWait(createApp(cfg), PAYLOAD);
+    const res = await triggerAndWait(createApp({ ...cfg, researcher: true }), PAYLOAD);
 
     expect(res.body.status).toBe('complete');
     const frontmatters = await runNoteFrontmatters();
@@ -124,8 +149,8 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     }
   });
 
-  test('writes a research note to research/', async () => {
-    await triggerAndWait(createApp(cfg), PAYLOAD);
+  test('with the Researcher on, writes a research note to research/', async () => {
+    await triggerAndWait(createApp({ ...cfg, researcher: true }), PAYLOAD);
 
     const files = await fs.readdir(path.join(vaultDir, 'research'));
     expect(files).toHaveLength(1);
@@ -194,6 +219,55 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     await expect(fs.access(evil)).rejects.toThrow();
   });
 
+  test('captures sent while a run is in progress run one at a time, in arrival order', async () => {
+    const app = createApp({ ...cfg, researcher: true });
+    mockState.delayMs = 30;
+    const captures = ['first', 'second', 'third'].map(name => ({
+      ...PAYLOAD,
+      file_path: `src/${name}.py`,
+      description: `capture-${name}`,
+    }));
+
+    const accepted = [];
+    for (const capture of captures) {
+      const res = await request(app).post('/webhook/knowledge-graph/trigger').send(capture);
+      expect(res.status).toBe(202);
+      accepted.push(res.body);
+    }
+    const finished = await Promise.all(accepted.map(a => waitForRun(app, a.status_url)));
+
+    expect(finished.map(r => r.body.status)).toEqual(['complete', 'complete', 'complete']);
+    // Every Ollama call names its capture's description; one at a time means
+    // each capture's calls form one unbroken block, in the order they were sent.
+    const owners = mockState.prompts.map(p => /(?:Description|Context): (capture-\w+)/.exec(p)![1]);
+    const blocks = owners.filter((o, i) => i === 0 || owners[i - 1] !== o);
+    expect(blocks).toEqual(['capture-first', 'capture-second', 'capture-third']);
+  });
+
+  test('a capture queued behind a failing run still runs', async () => {
+    const app = createApp({ ...cfg, ollamaUrl: 'http://127.0.0.1:1' });
+    const first = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+    const second = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+
+    const runs = await Promise.all([first, second].map(a => waitForRun(app, a.body.status_url)));
+    expect(runs.map(r => r.body.status)).toEqual(['partial', 'partial']);
+  });
+
+  test('the console logs one line per finished run with its id, status and duration', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const app = createApp(cfg);
+      const accepted = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+      await waitForRun(app, accepted.body.status_url);
+
+      const lines = log.mock.calls.map(c => c.join(' ')).filter(l => l.includes(accepted.body.run_id));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(new RegExp(`${accepted.body.run_id} complete in \\d+\\.\\ds`));
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   test('empty payload returns 400 with a helpful error', async () => {
     const res = await request(createApp(cfg))
       .post('/webhook/knowledge-graph/trigger')
@@ -243,7 +317,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
 
     try {
       const res = await triggerAndWait(
-        createApp({ ...cfg, ollamaUrl: `http://127.0.0.1:${flakyPort}` }),
+        createApp({ ...cfg, researcher: true, ollamaUrl: `http://127.0.0.1:${flakyPort}` }),
         PAYLOAD,
       );
 
@@ -260,5 +334,36 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     const res = await request(createApp(cfg)).get('/healthz');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+  });
+
+  describe('bind address', () => {
+    /** Starts the real listener on a free port and returns the address it bound. */
+    async function boundAddress(env: NodeJS.ProcessEnv): Promise<string> {
+      const server = await startServer({ ...loadConfig(env), port: 0, vaultPath: vaultDir });
+      try {
+        return (server.address() as { address: string }).address;
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+
+    test('by default the service listens on the loopback interface only', async () => {
+      expect(await boundAddress({})).toBe('127.0.0.1');
+    });
+
+    test('HOST changes the bind address', async () => {
+      expect(await boundAddress({ HOST: '0.0.0.0' })).toBe('0.0.0.0');
+    });
+
+    test('the started service answers on loopback', async () => {
+      const server = await startServer({ ...cfg, host: '127.0.0.1' });
+      try {
+        const { port } = server.address() as { port: number };
+        const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+        expect(await res.json()).toEqual({ status: 'ok' });
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    });
   });
 });
