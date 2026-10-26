@@ -50,7 +50,7 @@ export async function runDocumenter(ctx: SwarmContext, cfg: Config): Promise<Not
   const content = await chat(cfg.ollamaUrl, cfg.ollamaModel, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt(ctx) },
-  ]);
+  ], cfg.ollamaThink);
 
   const title = safeTitle(ctx.filePath || 'unknown');
   const notePath = path.join(cfg.vaultPath, 'code', `${ctx.today}_${title}.md`);

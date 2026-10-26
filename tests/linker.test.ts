@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { parseLinkMap, appendLinks, buildNoteIndex } from '../src/agents/linker';
+import { parseLinkMap, appendLinks, buildNoteIndex, filterLinks } from '../src/agents/linker';
 
 describe('parseLinkMap', () => {
   const VALID = [
@@ -78,5 +78,31 @@ describe('buildNoteIndex', () => {
 
   test('handles files at the vault root', () => {
     expect(buildNoteIndex(['readme.md'])).toBe('- [[readme]] (readme.md)');
+  });
+});
+
+describe('filterLinks', () => {
+  const SELF = '/vault/code/2026-10-23_src_auth_jwt.py.md';
+  const LOGS = ['2026-10-23_session_log'];
+
+  test('drops a link from a note to itself', () => {
+    expect(filterLinks(['[[2026-10-23_src_auth_jwt.py]]', '[[other]]'], SELF, LOGS)).toEqual([
+      '[[other]]',
+    ]);
+  });
+
+  test('drops links to session logs', () => {
+    expect(filterLinks(['[[2026-10-23_session_log]]', '[[other]]'], SELF, LOGS)).toEqual([
+      '[[other]]',
+    ]);
+  });
+
+  test('matches aliased and heading links by their target', () => {
+    const links = ['[[2026-10-23_src_auth_jwt.py|me]]', '[[2026-10-23_session_log#Notes]]'];
+    expect(filterLinks(links, SELF, LOGS)).toEqual([]);
+  });
+
+  test('keeps everything else untouched', () => {
+    expect(filterLinks(['[[a]]', '[[b]]'], SELF, LOGS)).toEqual(['[[a]]', '[[b]]']);
   });
 });
