@@ -4,122 +4,35 @@ import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import request from 'supertest';
-import { Express } from 'express';
 import { createApp, startServer } from '../src/server';
 import { Config, loadConfig } from '../src/config';
-
-/**
- * Mock Ollama: inspects the system prompt to decide which canned response to
- * return, mimicking how each agent gets a different reply.
- */
-interface MockState {
-  linkTargets: string[];
-  links: string[];
-  /** How long each reply takes, so runs that overlap would interleave. */
-  delayMs: number;
-  /** The user prompt of every chat request, in the order they arrived. */
-  prompts: string[];
-}
-
-function createMockOllama(state: MockState): http.Server {
-  return http.createServer((req, res) => {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', async () => {
-      const parsed = JSON.parse(body || '{}');
-      const system: string = parsed.messages?.[0]?.content ?? '';
-      state.prompts.push(parsed.messages?.[1]?.content ?? '');
-      if (state.delayMs > 0) await new Promise(resolve => setTimeout(resolve, state.delayMs));
-
-      let content: string;
-      if (system.includes('documentation assistant')) {
-        content = [
-          '---',
-          'title: "JWT Refresh Implementation"',
-          'date: 2026-06-10',
-          'tags: [python, jwt]',
-          'related: []',
-          'source: "ide-webhook"',
-          'type: "code"',
-          '---',
-          '',
-          '## Summary',
-          'Implements JWT refresh.',
-        ].join('\n');
-      } else if (system.includes('research assistant')) {
-        content = [
-          '---',
-          'title: "Research: JWT Refresh"',
-          'date: 2026-06-10',
-          'tags: [research, python, best-practices]',
-          'related: []',
-          'source: "ollama-research"',
-          'type: "research"',
-          '---',
-          '',
-          '## Overview',
-          'JWTs are stateless tokens.',
-        ].join('\n');
-      } else {
-        // Linker: suggest links for whichever note paths the test configured.
-        const linkMap = state.linkTargets.map(p => ({
-          new_note_path: p,
-          links_to_add: state.links,
-        }));
-        content = JSON.stringify(linkMap);
-      }
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ model: 'mock', message: { role: 'assistant', content }, done: true }));
-    });
-  });
-}
-
-// Under vitest's 5s test timeout, so a stuck run fails with its last status
-// instead of a bare "timed out".
-const RUN_DEADLINE_MS = 3000;
-
-/** Polls a run's status URL until it finishes, failing after RUN_DEADLINE_MS. */
-async function waitForRun(app: Express, statusUrl: string): Promise<request.Response> {
-  const deadline = Date.now() + RUN_DEADLINE_MS;
-  for (;;) {
-    const run = await request(app).get(statusUrl);
-    if (run.body.status !== 'running') return run;
-    if (Date.now() > deadline) {
-      throw new Error(`Run still running after ${RUN_DEADLINE_MS}ms: ${JSON.stringify(run.body)}`);
-    }
-    await new Promise(resolve => setTimeout(resolve, 5));
-  }
-}
-
-/** Triggers a run, checks it was accepted, then waits for it to finish. */
-async function triggerAndWait(app: Express, payload: object): Promise<request.Response> {
-  const accepted = await request(app).post('/webhook/knowledge-graph/trigger').send(payload);
-  expect(accepted.status).toBe(202);
-  return waitForRun(app, accepted.body.status_url);
-}
+import {
+  close,
+  createMockOllama,
+  createMockOllamaState,
+  listen,
+  replyToEmbed,
+  resetMockOllamaState,
+} from './helpers/mock-ollama';
+import { triggerAndWait, waitForRun } from './helpers/runs';
 
 describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   let mockServer: http.Server;
   let mockPort: number;
   let vaultDir: string;
   let cfg: Config;
-  const mockState: MockState = { linkTargets: [], links: [], delayMs: 0, prompts: [] };
+  const mockState = createMockOllamaState();
 
   beforeAll(async () => {
     mockServer = createMockOllama(mockState);
-    await new Promise<void>(resolve => mockServer.listen(0, resolve));
-    mockPort = (mockServer.address() as { port: number }).port;
+    mockPort = await listen(mockServer);
   });
 
-  afterAll(() => new Promise<void>(resolve => mockServer.close(() => resolve())));
+  afterAll(() => close(mockServer));
 
   beforeEach(async () => {
     vaultDir = await fs.mkdtemp(path.join(os.tmpdir(), 'swarm-e2e-'));
-    mockState.linkTargets = [];
-    mockState.links = ['[[existing-note]]'];
-    mockState.delayMs = 0;
-    mockState.prompts = [];
+    resetMockOllamaState(mockState);
     cfg = {
       host: '127.0.0.1',
       port: 0,
@@ -127,6 +40,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
       ollamaUrl: `http://127.0.0.1:${mockPort}`,
       ollamaModel: 'mock-model',
       ollamaThink: false,
+      embedModel: 'mock-embed',
       researcher: false,
     };
   });
@@ -380,6 +294,10 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
       let body = '';
       req.on('data', c => (body += c));
       req.on('end', () => {
+        if (req.url === '/api/embed') {
+          replyToEmbed(mockState, body, res);
+          return;
+        }
         const system: string = JSON.parse(body).messages?.[0]?.content ?? '';
         if (system.includes('research assistant')) {
           res.writeHead(500);

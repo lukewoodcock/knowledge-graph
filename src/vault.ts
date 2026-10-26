@@ -61,6 +61,44 @@ export function addFrontmatterFields(
   return content.slice(0, end) + lines.join('\n') + '\n' + content.slice(end);
 }
 
+/** A note split into its frontmatter fields and its body. */
+export interface ParsedNote {
+  /** Top-level `key: value` frontmatter fields, quotes removed. */
+  frontmatter: Record<string, string>;
+  /** Everything after the frontmatter block. */
+  body: string;
+}
+
+/** Strips surrounding double or single quotes from a YAML scalar. */
+function unquote(value: string): string {
+  if (/^".*"$/.test(value)) {
+    try {
+      return JSON.parse(value) as string;
+    } catch {
+      return value.slice(1, -1);
+    }
+  }
+  if (/^'.*'$/.test(value)) return value.slice(1, -1).replace(/''/g, "'");
+  return value;
+}
+
+/**
+ * Splits a note into frontmatter and body. Only flat `key: value` lines are
+ * read, which is all the vault's notes use; lists stay as their raw text
+ * (e.g. "[a, b]"). A note without frontmatter has none and keeps its whole
+ * content as the body.
+ */
+export function parseNote(content: string): ParsedNote {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(content);
+  if (!m) return { frontmatter: {}, body: content };
+  const frontmatter: Record<string, string> = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = /^([A-Za-z_][\w-]*):\s*(.*?)\s*$/.exec(line);
+    if (kv) frontmatter[kv[1]] = unquote(kv[2]);
+  }
+  return { frontmatter, body: content.slice(m[0].length) };
+}
+
 /** The frontmatter fields a note written from a capture carries. */
 export function captureFields(ctx: { project?: string; session?: string }): Record<string, string | undefined> {
   return { project: ctx.project, session: ctx.session };
