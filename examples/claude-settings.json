@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "SWARM_KG_VAULT_PATH=/ABSOLUTE/PATH/TO/vault node /ABSOLUTE/PATH/TO/swarm-kg/dist/hook/stop.js",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
