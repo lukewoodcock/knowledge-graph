@@ -4,6 +4,7 @@ import { createHash } from 'crypto';
 import { Config } from './config';
 import { embed } from './ollama';
 import { listMarkdownFiles, parseNote } from './vault';
+import { SESSION_LINKS_HEADING } from './memos';
 
 /**
  * The embedding index: every note's sections embedded with Ollama, kept in
@@ -37,6 +38,8 @@ export interface IndexSummary {
 export interface SearchOptions {
   /** Most results to return; DEFAULT_SEARCH_LIMIT when left out. */
   limit?: number;
+  /** Only notes of this kind (as SearchHit.kind names it), e.g. "todo". */
+  kind?: string;
 }
 
 export interface SearchHit {
@@ -88,11 +91,15 @@ function isIndexable(relPath: string): boolean {
   return !relPath.startsWith('logs/') && !relPath.split('/').some(seg => seg.startsWith('.'));
 }
 
+/** Headings (lower case) of the sections that only list links. */
+const LINK_SECTIONS = ['related notes', SESSION_LINKS_HEADING.toLowerCase()];
+
 /**
  * Splits a note body into its `##` sections. Text before the first `##`
  * heading is a section of its own. `##` lines inside code fences don't
- * start a section, and the Linker's "Related Notes" list is left out: link
- * names would make the note match queries about the notes it links to.
+ * start a section, and link lists (the Linker's "Related Notes", a memo's
+ * "Same Session") are left out: link names would make the note match
+ * queries about the notes it links to.
  */
 export function splitSections(body: string): Array<{ heading: string; text: string }> {
   const sections: Array<{ heading: string; lines: string[] }> = [{ heading: '', lines: [] }];
@@ -104,7 +111,7 @@ export function splitSections(body: string): Array<{ heading: string; text: stri
   }
   return sections
     .map(s => ({ heading: s.heading, text: s.lines.join('\n').trim() }))
-    .filter(s => s.text !== '' && s.heading.toLowerCase() !== 'related notes');
+    .filter(s => s.text !== '' && !LINK_SECTIONS.includes(s.heading.toLowerCase()));
 }
 
 /**
@@ -360,6 +367,7 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
         const hits: SearchHit[] = [];
         for (const [relPath, note] of Object.entries(index.notes)) {
           if (note.research) continue;
+          if (options.kind !== undefined && note.kind !== options.kind) continue;
           let best: IndexedSection | undefined;
           let bestScore = -Infinity;
           for (const section of note.sections) {
