@@ -208,6 +208,16 @@ describe('buildPayloads', () => {
     expect(payloads.map(p => p.file_path)).toEqual(['/elsewhere/a.go']);
   });
 
+  test('carries the session id and project when known, and leaves them out when not', () => {
+    const tagged = buildPayloads(turn, { cwd: '/demo/app', cfg, sessionId: 'sess-1', project: 'app' });
+    for (const p of tagged) expect(p).toMatchObject({ session_id: 'sess-1', project: 'app' });
+
+    for (const p of buildPayloads(turn, { cwd: '/demo/app', cfg })) {
+      expect(p).not.toHaveProperty('session_id');
+      expect(p).not.toHaveProperty('project');
+    }
+  });
+
   test('no edits, no payloads', () => {
     expect(buildPayloads({ prompt: 'p', edits: [] }, { cfg })).toEqual([]);
   });

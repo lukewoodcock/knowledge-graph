@@ -17,6 +17,10 @@ export interface WebhookPayload {
   language: string;
   description: string;
   changed_code: string;
+  /** The Claude Code session the turn belongs to. */
+  session_id?: string;
+  /** The project the session works in (see projectName in io.ts). */
+  project?: string;
 }
 
 export interface HookConfig {
@@ -105,13 +109,14 @@ export function displayPath(filePath: string, cwd?: string): string {
  * One payload per changed file (deduped, capped at cfg.maxFiles), all
  * sharing the turn's prompt as the description. `diffs` maps a file path to
  * its git diff; files without one fall back to the tool input's new text.
- * Files inside the vault are left out, like the cwd guard.
+ * Files inside the vault are left out, like the cwd guard. Each payload
+ * carries the session id and project when they're known.
  */
 export function buildPayloads(
   turn: Turn,
-  opts: { cwd?: string; diffs?: Map<string, string>; cfg: HookConfig },
+  opts: { cwd?: string; diffs?: Map<string, string>; cfg: HookConfig; sessionId?: string; project?: string },
 ): WebhookPayload[] {
-  const { cwd, diffs, cfg } = opts;
+  const { cwd, diffs, cfg, sessionId, project } = opts;
   const description = truncate(turn.prompt, cfg.maxDescriptionChars);
 
   return changedFiles(turn, cfg)
@@ -120,6 +125,8 @@ export function buildPayloads(
       language: languageFromPath(e.filePath),
       description,
       changed_code: truncate(diffs?.get(e.filePath) || e.content, cfg.maxCodeChars),
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(project ? { project } : {}),
     }));
 }
 

@@ -7,7 +7,7 @@
 import { promises as fs } from 'fs';
 import { extractLastTurn } from './transcript';
 import { StopHookInput, buildPayloads, changedFiles, loadHookConfig, skipReason } from './payload';
-import { gitDiff, postPayload, readStdin } from './io';
+import { gitDiff, postPayload, projectName, readStdin } from './io';
 
 const HARD_DEADLINE_MS = 5000;
 
@@ -29,12 +29,15 @@ async function main(): Promise<void> {
   if (files.length === 0) return log('skip: no files edited this turn');
 
   const diffs = new Map<string, string>();
+  let project: string | undefined;
   if (input.cwd) {
     const cwd = input.cwd;
+    const naming = projectName(cwd);
     await Promise.all(files.map(async f => diffs.set(f.filePath, await gitDiff(cwd, f.filePath))));
+    project = await naming;
   }
 
-  const payloads = buildPayloads(turn, { cwd: input.cwd, diffs, cfg });
+  const payloads = buildPayloads(turn, { cwd: input.cwd, diffs, cfg, sessionId: input.session_id, project });
   const results = await Promise.all(payloads.map(p => postPayload(cfg.url, p, cfg.timeoutMs)));
   results.forEach(r => log(r));
 }
