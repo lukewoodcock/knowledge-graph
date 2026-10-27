@@ -3,14 +3,15 @@ import * as http from 'http';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { Config } from './config';
-import { SwarmContext, NoteResult } from './types';
+import { SwarmContext, NoteResult, RunStatus } from './types';
 import { today, appendNote } from './vault';
 import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
 import { readNote, relatedNotes } from './graph';
-import { createEmbeddingIndex, EmbeddingIndex, MAX_SEARCH_LIMIT } from './embedding-index';
-import { Memo, memoLinks, parseMemos, writeMemos } from './memos';
+import { createEmbeddingIndex, EmbeddingIndex } from './embedding-index';
+import { memoLinks, writeMemos } from './memos';
+import { Memo, parseMemos, parseSearch, trimmedString } from './requests';
 
 interface WebhookPayload {
   file_path?: string;
@@ -19,11 +20,6 @@ interface WebhookPayload {
   changed_code?: string;
   session_id?: string;
   project?: string;
-}
-
-/** A non-empty string, or undefined for anything else. */
-function optionalString(v: unknown): string | undefined {
-  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
 }
 
 /** Appends one capture's entry (its `- **Field:** value` lines) to the day's session log. */
@@ -55,7 +51,7 @@ async function writeSessionLog(date: string, lines: string[], cfg: Config): Prom
 }
 
 /** Result body for a finished swarm run (same shape the sync API returned). */
-type RunResult = Record<string, unknown> & { status: 'complete' | 'partial' | 'error' };
+type RunResult = Record<string, unknown> & { status: Exclude<RunStatus, 'running'> };
 
 type Run = { status: 'running'; run_id: string } | (RunResult & { run_id: string });
 
@@ -220,8 +216,8 @@ export function createApp(cfg: Config): Express {
       description: body.description || '',
       changedCode: body.changed_code || '',
       today: today(),
-      session: optionalString(body.session_id),
-      project: optionalString(body.project),
+      session: trimmedString(body.session_id),
+      project: trimmedString(body.project),
     };
 
     res.status(202).json(enqueue(ctx.filePath || ctx.description, () => runSwarm(ctx, cfg, index)));
@@ -242,26 +238,15 @@ export function createApp(cfg: Config): Express {
 
   // Recall: ranked notes for a query. Research notes are never returned.
   app.post('/webhook/knowledge-graph/search', async (req, res) => {
-    const body = (req.body ?? {}) as { query?: unknown; limit?: unknown; kind?: unknown };
-    const query = optionalString(body.query);
-    if (!query) {
-      res.status(400).json({ error: 'Payload must include a non-empty query' });
+    const parsed = parseSearch(req.body);
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
       return;
     }
-    // Blank or null means no filter.
-    if (body.kind !== undefined && body.kind !== null && typeof body.kind !== 'string') {
-      res.status(400).json({ error: 'kind must be a string, e.g. "todo"' });
-      return;
-    }
-    const kind = optionalString(body.kind);
-    const limit = body.limit;
-    if (limit !== undefined && !(Number.isInteger(limit) && (limit as number) > 0)) {
-      res.status(400).json({ error: `limit must be a whole number from 1 to ${MAX_SEARCH_LIMIT}` });
-      return;
-    }
+    const { query, limit, kind } = parsed;
 
     try {
-      const results = await index.search(query, { limit: limit as number | undefined, kind });
+      const results = await index.search(query, { limit, kind });
       res.json({ query, ...(kind ? { kind } : {}), results });
     } catch (err) {
       res.status(502).json({ error: `Search failed: ${String(err)}` });

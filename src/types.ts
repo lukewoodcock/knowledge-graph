@@ -19,6 +19,9 @@ export interface NoteResult {
   title: string;
 }
 
+/** Where a run is: queued or going, or how it finished. */
+export type RunStatus = 'running' | 'complete' | 'partial' | 'error';
+
 /** Result returned by the Linker agent. */
 export interface LinkerResult {
   agent: 'linker';
