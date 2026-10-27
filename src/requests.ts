@@ -92,26 +92,36 @@ export function parseMemos(body: unknown): { memos: Memo[] } | { error: string }
   return problems.length > 0 ? { error: problems.join('; ') } : { memos };
 }
 
-/** A search request, validated. */
-export interface SearchRequest {
-  query: string;
-  limit?: number;
-  /** Only notes of this kind; undefined for no filter. */
-  kind?: string;
-}
+/** The filters a search can narrow its results with, each with an example for its error. */
+const SEARCH_FILTERS = { type: 'code', kind: 'todo', status: 'open' } as const;
 
-/** The search in a search request: a non-empty query, an optional limit and an optional kind filter. */
+type SearchFilter = keyof typeof SEARCH_FILTERS;
+
+/** A search request, validated. A filter left out (or sent blank or null) is undefined. */
+export type SearchRequest = { query: string; limit?: number } & Partial<Record<SearchFilter, string>>;
+
+/**
+ * The search in a search request: a non-empty query, an optional limit, and
+ * optional filters: the note's type (code, memo), a memo's kind (todo,
+ * decision...) and the note's status (open).
+ */
 export function parseSearch(body: unknown): SearchRequest | { error: string } {
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   const query = trimmedString(b.query);
   if (!query) return { error: 'Payload must include a non-empty query' };
-  // Blank or null means no filter.
-  if (b.kind !== undefined && b.kind !== null && typeof b.kind !== 'string') {
-    return { error: 'kind must be a string, e.g. "todo"' };
-  }
   const limit = b.limit;
   if (limit !== undefined && !(typeof limit === 'number' && Number.isInteger(limit) && limit > 0)) {
     return { error: `limit must be a whole number from 1 to ${MAX_SEARCH_LIMIT}` };
   }
-  return { query, limit, kind: trimmedString(b.kind) };
+  const search: SearchRequest = { query, limit };
+  for (const [filter, example] of Object.entries(SEARCH_FILTERS) as Array<[SearchFilter, string]>) {
+    const value = b[filter];
+    // Blank or null means no filter.
+    if (value !== undefined && value !== null && typeof value !== 'string') {
+      return { error: `${filter} must be a string, e.g. "${example}"` };
+    }
+    const trimmed = trimmedString(value);
+    if (trimmed) search[filter] = trimmed;
+  }
+  return search;
 }

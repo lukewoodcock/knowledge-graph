@@ -247,8 +247,8 @@ the container so the published port can reach the service.
 Every note is embedded with a local Ollama embedding model (`bge-large` by
 default, set with `OLLAMA_EMBED_MODEL`) as soon as a run writes it, so a run's
 notes are searchable by the time the run finishes. Each `##` section is
-embedded on its own, with the note's title, kind, project and a one-line
-summary in front of it, so a section like "Key Points" still matches questions
+embedded on its own, with the note's title, type, kind (for a memo), project
+and a one-line summary in front of it, so a section like "Key Points" still matches questions
 about the note's topic. A section too long for the model (over about 1500
 characters) is split at paragraph breaks into chunks that keep its heading.
 
@@ -265,7 +265,9 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
     {
       "name": "2026-06-10_project-a_src_auth_jwt.py",
       "path": "code/2026-06-10_project-a_src_auth_jwt.py.md",
-      "kind": "code",
+      "type": "code",
+      "kind": null,
+      "status": null,
       "project": "project-a",
       "snippet": "## Summary\nImplements JWT refresh with a sliding expiry window…",
       "score": 0.81
@@ -276,10 +278,18 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
 
 `query` is required; `limit` is optional (5 by default, at most 50). A note's
 score is the cosine similarity of its best-matching section, which is also its
-snippet. `kind` is a memo's kind, else the note's `type`. Research notes and
-session logs are never returned. An optional `kind` in the request returns only
-notes of that kind, e.g. `{"query": "what's left to do?", "kind": "todo"}`
-recalls todos (open ones carry `status: open` until you change it in Obsidian).
+snippet. `type` is the note's type from its frontmatter (`code`, `memo`, or
+whatever another source writes), `kind` a memo's kind (`learning`, `decision`,
+`todo`, `snippet`, `conversation`; `null` for every other note) and `status`
+the note's status (a todo's is `open` until you change it in Obsidian; `null`
+when the note has none). Research notes (`type: research`, wherever they live)
+and session logs are never returned.
+
+Optional `type`, `kind` and `status` in the request narrow the results to
+notes with that value, so `{"query": "what's left to do?", "kind": "todo",
+"status": "open"}` recalls open todos. A todo closed in Obsidian drops out of
+that search once the index picks up the edit (on the next start, or
+`npm run reindex`).
 
 The Linker uses the same search to pick link candidates: each new note's title
 and body are the query, and the ten best hits (never the note itself) are the
@@ -325,7 +335,7 @@ curl -s http://localhost:5678/webhook/knowledge-graph/notes/cache-decision | jq 
 
 `content` is the note's markdown after its frontmatter. The related endpoint
 lists the notes a note links to (`outgoing`) and the notes that link to it
-(`incoming`), each as `{name, path, title, kind, project}`. Session logs,
+(`incoming`), each as `{name, path, title, type, kind, project}`. Session logs,
 links to notes that don't exist, and self-links are left out.
 
 ```bash
@@ -345,7 +355,7 @@ has no network listener of its own; each tool calls the service's HTTP API:
 
 | Tool | Calls |
 |------|-------|
-| `search_notes(query, limit = 5, kind?)` | `POST /webhook/knowledge-graph/search` |
+| `search_notes(query, limit = 5, type?, kind?, status?)` | `POST /webhook/knowledge-graph/search` |
 | `get_note(name)` | `GET /webhook/knowledge-graph/notes/:name` |
 | `related_notes(name)` | `GET /webhook/knowledge-graph/notes/:name/related` |
 

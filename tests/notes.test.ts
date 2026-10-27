@@ -132,10 +132,10 @@ describe('note and related endpoints (end-to-end)', () => {
     expect(res.body).toEqual({
       name: '2026-06-10_jwt.py',
       outgoing: [
-        { name: 'cache-decision', path: 'memos/cache-decision.md', title: 'Cache invalidation decision', kind: 'decision', project: 'project-b' },
+        { name: 'cache-decision', path: 'memos/cache-decision.md', title: 'Cache invalidation decision', type: null, kind: 'decision', project: 'project-b' },
       ],
       incoming: [
-        { name: 'token-learning', path: 'memos/token-learning.md', title: 'Token learning', kind: 'learning', project: 'project-a' },
+        { name: 'token-learning', path: 'memos/token-learning.md', title: 'Token learning', type: null, kind: 'learning', project: 'project-a' },
       ],
     });
   });

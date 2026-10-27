@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { listMarkdownFiles, parseNote } from './vault';
-import { isNote, isSessionLog, linkTargets, noteName } from './vault-format';
+import { isNote, isSessionLog, linkTargets, noteName, NoteRef, noteRefFields } from './vault-format';
 
 /**
  * Reading the graph by name: one note in full, and the notes linked to and
@@ -37,13 +37,8 @@ export async function readNote(vaultPath: string, name: string): Promise<NoteVie
 }
 
 /** A linked note, described enough to decide whether to open it. */
-export interface LinkedNote {
-  name: string;
-  path: string;
+export interface LinkedNote extends NoteRef {
   title: string;
-  /** The memo's kind, else the note's type (code, research...), else null. */
-  kind: string | null;
-  project: string | null;
 }
 
 /** The notes one note links to (outgoing) and the notes linking to it (incoming). */
@@ -71,8 +66,7 @@ export async function relatedNotes(vaultPath: string, name: string): Promise<Rel
         name: n,
         path: relPath,
         title: frontmatter.title || n,
-        kind: frontmatter.kind || frontmatter.type || null,
-        project: frontmatter.project || null,
+        ...noteRefFields(frontmatter),
       },
       links: linkTargets(content),
     });

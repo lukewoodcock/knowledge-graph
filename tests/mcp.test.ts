@@ -132,9 +132,33 @@ describe('MCP server for recall', () => {
     expect(body.results[0]).toMatchObject({
       name: 'container-setup',
       path: 'code/container-setup.md',
-      kind: 'code',
+      type: 'code',
+      kind: null,
       project: 'project-a',
     });
+  });
+
+  test('search_notes filters by type, kind and status, so an agent can recall open todos', async () => {
+    const todo = (status: string) =>
+      ['---', `title: "Docker todo ${status}"`, 'type: "memo"', 'kind: "todo"', `status: "${status}"`, '---', '', 'Fix docker.'].join('\n');
+    await writeVaultNote('memos/open-todo.md', todo('open'));
+    await writeVaultNote('memos/done-todo.md', todo('done'));
+    await writeVaultNote('code/container-setup.md', DOCKER_NOTE);
+    const c = await connect(await startService());
+
+    const open = json(await callTool(c, 'search_notes', { query: 'docker', kind: 'todo', status: 'open' }));
+    const code = json(await callTool(c, 'search_notes', { query: 'docker', type: 'code' }));
+
+    expect(open.results.map((r: { name: string; status: string }) => [r.name, r.status])).toEqual([['open-todo', 'open']]);
+    expect(code.results.map((r: { name: string }) => r.name)).toEqual(['container-setup']);
+  });
+
+  test("search_notes only takes a memo kind as kind", async () => {
+    const c = await connect(await startService());
+
+    const result = await callTool(c, 'search_notes', { query: 'docker', kind: 'code' });
+
+    expect(result.isError).toBe(true);
   });
 
   test('get_note returns the full note and its frontmatter', async () => {

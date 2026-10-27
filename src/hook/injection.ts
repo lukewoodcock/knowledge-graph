@@ -1,6 +1,7 @@
 // Pure pieces of the context-injection hook: config and the block of
 // reference notes added to the prompt.
 import { positiveInt, serviceUrl } from '../env';
+import type { NoteRef } from '../vault-format';
 
 /** The subset of the UserPromptSubmit hook stdin JSON we use. */
 export interface PromptHookInput {
@@ -11,11 +12,7 @@ export interface PromptHookInput {
 }
 
 /** One result from the service's search endpoint (see SearchHit in src/embedding-index.ts). */
-export interface SearchResult {
-  name: string;
-  path: string;
-  kind: string | null;
-  project: string | null;
+export interface SearchResult extends NoteRef {
   snippet: string;
   score: number;
 }
@@ -103,7 +100,9 @@ function neutralise(text: string): string {
 }
 
 function renderNote(r: SearchResult): string {
-  const about = [r.path, r.project && `project ${r.project}`, r.kind && `kind ${r.kind}`].filter(Boolean).join(', ');
+  const about = [r.path, r.project && `project ${r.project}`, r.type && `type ${r.type}`, r.kind && `kind ${r.kind}`]
+    .filter(Boolean)
+    .join(', ');
   return neutralise(`### Note: ${r.name} (${about})\n${r.snippet.trim()}`);
 }
 

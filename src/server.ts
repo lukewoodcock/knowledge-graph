@@ -236,18 +236,19 @@ export function createApp(cfg: Config): Express {
     res.status(202).json(enqueue(`${memos.length} memo(s)`, () => runMemos(memos, date, cfg, index)));
   });
 
-  // Recall: ranked notes for a query. Research notes are never returned.
+  // Recall: ranked notes for a query, optionally narrowed by type, kind and
+  // status. Research notes are never returned.
   app.post('/webhook/knowledge-graph/search', async (req, res) => {
     const parsed = parseSearch(req.body);
     if ('error' in parsed) {
       res.status(400).json({ error: parsed.error });
       return;
     }
-    const { query, limit, kind } = parsed;
+    const { query, limit, ...filters } = parsed;
 
     try {
-      const results = await index.search(query, { limit, kind });
-      res.json({ query, ...(kind ? { kind } : {}), results });
+      const results = await index.search(query, { limit, ...filters });
+      res.json({ query, ...filters, results });
     } catch (err) {
       res.status(502).json({ error: `Search failed: ${String(err)}` });
     }

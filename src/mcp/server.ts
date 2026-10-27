@@ -10,6 +10,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { serviceUrl } from '../env';
+import { MEMO_KINDS } from '../requests';
 
 // A search can queue behind the startup sync embedding new notes.
 const TIMEOUT_MS = 30_000;
@@ -68,22 +69,22 @@ export function buildMcpServer(baseUrl: string): McpServer {
     {
       description:
         'Search the knowledge graph by meaning for notes about past work, decisions, learnings, todos and snippets. ' +
-        'Returns ranked notes with name, kind, project, the best-matching snippet and a score. ' +
+        "Returns ranked notes with name, type (code, memo), kind (a memo's), status (a todo's), project, " +
+        'the best-matching snippet and a score. ' +
         `Open a hit with get_note. ${REFERENCE_ONLY}`,
       inputSchema: {
         query: z.string().min(1).describe('A short search query'),
         limit: z.number().int().min(1).max(50).default(5).describe('Most results to return'),
-        kind: z
-          .enum(['learning', 'decision', 'todo', 'snippet', 'conversation', 'code'])
-          .optional()
-          .describe('Only return notes of this kind'),
+        type: z.string().min(1).optional().describe('Only return notes of this type, e.g. "code" or "memo"'),
+        kind: z.enum(MEMO_KINDS).optional().describe('Only return memos of this kind'),
+        status: z.string().min(1).optional().describe('Only return notes with this status, e.g. "open" for open todos'),
       },
     },
-    ({ query, limit, kind }) =>
+    ({ query, limit, type, kind, status }) =>
       call(`${base}/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, limit, ...(kind ? { kind } : {}) }),
+        body: JSON.stringify({ query, limit, type, kind, status }),
       }),
   );
 

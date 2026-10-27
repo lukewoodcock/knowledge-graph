@@ -57,6 +57,24 @@ export function isResearch(frontmatter: Record<string, string>): boolean {
   return frontmatter.type === 'research';
 }
 
+/** A note, described enough to decide whether to open it. */
+export interface NoteRef {
+  /** The note's name: its file name without `.md`, as a link names it. */
+  name: string;
+  /** Path relative to the vault root, e.g. "memos/2026-06-10_Use_write-through_caching.md". */
+  path: string;
+  /** What sort of note it is (code, research, memo, ...), from its frontmatter; null when it says none. */
+  type: string | null;
+  /** A memo's kind (learning, decision, todo, snippet, conversation); null for every other note. */
+  kind: string | null;
+  project: string | null;
+}
+
+/** The NoteRef fields a note's frontmatter gives it. */
+export function noteRefFields(frontmatter: Record<string, string>): Pick<NoteRef, 'type' | 'kind' | 'project'> {
+  return { type: frontmatter.type || null, kind: frontmatter.kind || null, project: frontmatter.project || null };
+}
+
 /** The heading of the section where the service lists a memo's same-session links. */
 export const SESSION_LINKS_HEADING = 'Same Session';
 

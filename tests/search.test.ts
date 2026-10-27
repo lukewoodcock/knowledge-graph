@@ -81,10 +81,11 @@ describe('search over the embedding index (end-to-end)', () => {
     expect(res.body.results[0].name).toBe(path.basename(codeNote.note_path, '.md'));
   });
 
-  test("each section is embedded with its note's title, kind, project and summary in front", async () => {
+  test("each section is embedded with its note's title, type, kind, project and summary in front", async () => {
     await writeVaultNote('memos/caching-decision.md', [
       '---',
       'title: "Cache invalidation decision"',
+      'type: "memo"',
       'kind: "decision"',
       'project: "project-b"',
       '---',
@@ -101,6 +102,7 @@ describe('search over the embedding index (end-to-end)', () => {
 
     const prefix = [
       'Note: Cache invalidation decision',
+      'Type: memo',
       'Kind: decision',
       'Project: project-b',
       'Summary: We chose write-through caching.',
@@ -119,7 +121,7 @@ describe('search over the embedding index (end-to-end)', () => {
     expect(embeddedTexts(mockState)).toContain(
       [
         'Note: JWT Refresh Implementation',
-        'Kind: code',
+        'Type: code',
         'Project: project-a',
         'Summary: Implements JWT refresh.',
         '',
@@ -191,7 +193,7 @@ describe('search over the embedding index (end-to-end)', () => {
     expect(res.body.results.map((r: { name: string }) => r.name)).toEqual(['two', 'one']);
   });
 
-  test('each result has the note name, kind, project, best-matching snippet and score', async () => {
+  test('each result has the note name, path, type, kind, status, project, best-matching snippet and score', async () => {
     await writeVaultNote('code/focused.md', plainNote('Focused', [
       '## Containers', 'We run docker.', '',
       '## Scripts', 'python python python',
@@ -203,7 +205,9 @@ describe('search over the embedding index (end-to-end)', () => {
       {
         name: 'focused',
         path: 'code/focused.md',
-        kind: 'code',
+        type: 'code',
+        kind: null,
+        status: null,
         project: 'project-a',
         snippet: '## Containers\nWe run docker.',
         score: expect.closeTo(1, 6),
@@ -225,7 +229,7 @@ describe('search over the embedding index (end-to-end)', () => {
 
     expect(res.body.results.length).toBeGreaterThan(0);
     for (const r of res.body.results) {
-      expect(r.kind).not.toBe('research');
+      expect(r.type).not.toBe('research');
       expect(r.path).not.toMatch(/^research\//);
     }
   });

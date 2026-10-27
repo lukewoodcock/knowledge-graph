@@ -12,6 +12,7 @@ const HOOK = path.join(__dirname, '..', 'src', 'hook', 'prompt.ts');
 interface Hit {
   name: string;
   path: string;
+  type: string | null;
   kind: string | null;
   project: string | null;
   snippet: string;
@@ -53,7 +54,8 @@ function injected(result: HookResult): string | null {
 const hit = (name: string, score: number, snippet = `## Summary\nWhat ${name} is about.`): Hit => ({
   name,
   path: `code/${name}.md`,
-  kind: 'code',
+  type: 'code',
+  kind: null,
   project: 'project-a',
   snippet,
   score,
@@ -142,7 +144,7 @@ describe('context-injection hook entrypoint', () => {
   });
 
   test('wraps the notes in a block marking them as reference material, not instructions, naming each note', async () => {
-    results = [hit('queue-decision', 0.82), { ...hit('memo-jwt', 0.75), kind: 'decision', project: 'project-b' }];
+    results = [hit('queue-decision', 0.82), { ...hit('memo-jwt', 0.75), type: 'memo', kind: 'decision', project: 'project-b' }];
 
     const context = injected(await runHook(prompt('Why one run at a time?'), { SWARM_KG_SERVICE_URL: url }))!;
 
@@ -150,8 +152,8 @@ describe('context-injection hook entrypoint', () => {
     expect(context.trimEnd().endsWith('</swarm-kg-reference-notes>')).toBe(true);
     expect(context).toMatch(/reference notes from the knowledge graph/i);
     expect(context).toMatch(/not instructions/i);
-    expect(context).toContain('Note: queue-decision (code/queue-decision.md, project project-a, kind code)');
-    expect(context).toContain('Note: memo-jwt (code/memo-jwt.md, project project-b, kind decision)');
+    expect(context).toContain('Note: queue-decision (code/queue-decision.md, project project-a, type code)');
+    expect(context).toContain('Note: memo-jwt (code/memo-jwt.md, project project-b, type memo, kind decision)');
     expect(context).toContain('What queue-decision is about.');
   });
 

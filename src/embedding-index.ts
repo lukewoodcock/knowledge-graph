@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { Config } from './config';
 import { embed } from './ollama';
 import { listMarkdownFiles, parseNote } from './vault';
-import { isRecallable, isResearch, LINK_SECTION_HEADINGS, noteName, vaultRelative } from './vault-format';
+import { isRecallable, isResearch, LINK_SECTION_HEADINGS, noteName, NoteRef, noteRefFields, vaultRelative } from './vault-format';
 
 /**
  * The embedding index: every note's sections embedded with Ollama, kept in
@@ -38,18 +38,17 @@ export interface IndexSummary {
 export interface SearchOptions {
   /** Most results to return; DEFAULT_SEARCH_LIMIT when left out. */
   limit?: number;
-  /** Only notes of this kind (as SearchHit.kind names it), e.g. "todo". */
+  /** Only notes of this type, e.g. "code" or "memo". */
+  type?: string;
+  /** Only memos of this kind, e.g. "todo". */
   kind?: string;
+  /** Only notes with this status, e.g. "open" for open todos. */
+  status?: string;
 }
 
-export interface SearchHit {
-  /** The note's name: its file name without `.md`, as a link would name it. */
-  name: string;
-  /** Path relative to the vault root, e.g. "code/2026-06-10_jwt.py.md". */
-  path: string;
-  /** The memo's kind, else the note's type (code, research...), else null. */
-  kind: string | null;
-  project: string | null;
+export interface SearchHit extends NoteRef {
+  /** The note's `status` (a todo's is "open" until it's closed by hand), or null. */
+  status: string | null;
   /** The best-matching section, shortened to SNIPPET_LENGTH characters. */
   snippet: string;
   /** Cosine similarity of the best-matching section to the query. */
@@ -62,7 +61,7 @@ const SNIPPET_LENGTH = 300;
 
 /** Where the index lives, relative to the vault root. Obsidian hides dot folders. */
 export const INDEX_FILE = path.join('.swarm-kg', 'index.json');
-// 2: research is decided by the note's type alone, no longer by its folder.
+// 2: type, kind and status kept apart, and research decided by the note's type alone.
 const INDEX_VERSION = 2;
 
 interface IndexedSection {
@@ -73,7 +72,9 @@ interface IndexedSection {
 
 interface IndexedNote {
   hash: string;
+  type: string | null;
   kind: string | null;
+  status: string | null;
   project: string | null;
   /** True for the Researcher's notes, which recall leaves out. */
   research: boolean;
@@ -188,13 +189,15 @@ function summaryLine(
  */
 export function contextPrefix(ctx: {
   title: string;
+  type: string | null;
   kind: string | null;
   project: string | null;
   summary?: string;
 }): string {
   return [
     `Note: ${ctx.title.substring(0, 120)}`,
-    ...(ctx.kind ? [`Kind: ${ctx.kind}`] : []),
+    ...(ctx.type ? [`Type: ${ctx.type.substring(0, 40)}`] : []),
+    ...(ctx.kind ? [`Kind: ${ctx.kind.substring(0, 40)}`] : []),
     ...(ctx.project ? [`Project: ${ctx.project.substring(0, 80)}`] : []),
     ...(ctx.summary ? [`Summary: ${ctx.summary}`] : []),
   ].join('\n');
@@ -257,15 +260,9 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
   async function embedNote(relPath: string, content: string, hash: string): Promise<IndexedNote> {
     const { frontmatter, body } = parseNote(content);
     const name = noteName(relPath);
-    const kind = frontmatter.kind || frontmatter.type || null;
-    const project = frontmatter.project || null;
+    const ref = noteRefFields(frontmatter);
     const sections = splitSections(body);
-    const prefix = contextPrefix({
-      title: frontmatter.title || name,
-      kind,
-      project,
-      summary: summaryLine(frontmatter, sections),
-    });
+    const prefix = contextPrefix({ title: frontmatter.title || name, ...ref, summary: summaryLine(frontmatter, sections) });
     // A note with no body is still findable by its title and context.
     const texts = sections.length > 0 ? sections.flatMap(s => chunkSection(s.heading, s.text)) : [''];
     const vectors = await embed(
@@ -275,8 +272,8 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
     );
     return {
       hash,
-      kind,
-      project,
+      ...ref,
+      status: frontmatter.status || null,
       research: isResearch(frontmatter),
       sections: texts.map((text, i) => ({ text, vector: vectors[i] })),
     };
@@ -358,7 +355,9 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
         const hits: SearchHit[] = [];
         for (const [relPath, note] of Object.entries(index.notes)) {
           if (note.research) continue;
+          if (options.type !== undefined && note.type !== options.type) continue;
           if (options.kind !== undefined && note.kind !== options.kind) continue;
+          if (options.status !== undefined && note.status !== options.status) continue;
           let best: IndexedSection | undefined;
           let bestScore = -Infinity;
           for (const section of note.sections) {
@@ -372,7 +371,9 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
           hits.push({
             name: noteName(relPath),
             path: relPath,
+            type: note.type,
             kind: note.kind,
+            status: note.status,
             project: note.project,
             snippet: snippet(best.text),
             score: bestScore,
