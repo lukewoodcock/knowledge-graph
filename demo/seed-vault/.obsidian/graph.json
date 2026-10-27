@@ -1,0 +1,10 @@
+{
+  "showTags": false,
+  "showAttachments": false,
+  "showOrphans": true,
+  "colorGroups": [
+    { "query": "[project:shortlinks]", "color": { "a": 1, "rgb": 3381759 } },
+    { "query": "[project:notes-api]", "color": { "a": 1, "rgb": 16750848 } },
+    { "query": "[project:billing-service]", "color": { "a": 1, "rgb": 10066329 } }
+  ]
+}
