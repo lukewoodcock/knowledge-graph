@@ -58,7 +58,7 @@ export async function runResearcher(ctx: SwarmContext, cfg: Config): Promise<Not
 
   const topic = ctx.description || ctx.filePath;
   const title = safeTitle(topic || 'unknown');
-  const notePath = notePathIn(cfg.vaultPath, 'research', researchNoteName(ctx.today, topic));
+  const notePath = notePathIn(cfg.vaultPath, 'research', researchNoteName(ctx.today, ctx.project, topic));
   await writeNote(notePath, addFrontmatterFields(content, captureFields(ctx)));
 
   return { agent: 'researcher', status: 'success', notePath, title };

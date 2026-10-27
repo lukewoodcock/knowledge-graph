@@ -21,5 +21,5 @@ session: "3d8e1f60-2b7c-4a95-9e04-6c1b5a7d1012"
 No rate limiting yet on `POST /links`.
 
 ## Related Notes
-- [[2026-10-12_src_codes.js]]
+- [[2026-10-12_shortlinks_src_codes.js]]
 - [[2026-10-12_Add_rate_limiting_to_the_shortlinks_create-link_endpoint_before_launch]]

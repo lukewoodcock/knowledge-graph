@@ -64,6 +64,11 @@ and `project` (the codebase, named after its git repository): when sent, they
 are recorded as `session` and `project` in the frontmatter of every note the
 run writes, and when left out those fields are simply absent.
 
+The Documenter's note is `code/<date>_<project>_<file path>.md` (for example
+`code/2026-06-10_project-a_src_auth_jwt.py.md`), so two projects changing a
+file of the same name on the same day get a note each. Without a `project`
+the name is just `<date>_<file path>`, as in the reply below.
+
 The service replies `202 Accepted` straight away and the agents run in the
 background:
 
@@ -157,7 +162,7 @@ each memo with all its links, each named once:
       "name": "2026-06-10_Use_write-through_caching",
       "note_path": "/vault/memos/2026-06-10_Use_write-through_caching.md",
       "kind": "decision",
-      "links": ["2026-06-10_src_cache.ts", "2026-06-02_redis-notes"]
+      "links": ["2026-06-10_project-a_src_cache.ts", "2026-06-02_redis-notes"]
     }
   ],
   "linker": { "status": "success", "links_written": 1 }
@@ -194,9 +199,9 @@ node dist/remember.js --session <session id> --project-dir <project root> < memo
 ```
 Saved 2 memo(s) to the graph for project url-shortener, session 2d27…:
 - 2026-10-26_URL_shortener_short_codes_are_the_base62_encoding_of_an_auto (decision)
-  links: [[2026-10-26_src_shorten.js]]
+  links: [[2026-10-26_url-shortener_src_shorten.js]]
 - 2026-10-26_Add_rate_limiting_to_the_URL_shortener_create-link_endpoint_ (todo)
-  links: [[2026-10-26_src_shorten.js]]
+  links: [[2026-10-26_url-shortener_src_shorten.js]]
 ```
 
 - **Input**: on stdin, one memo, a JSON array of them, or `{"memos": [...]}`,
@@ -258,8 +263,8 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
   "query": "how did I refresh JWTs?",
   "results": [
     {
-      "name": "2026-06-10_src_auth_jwt.py",
-      "path": "code/2026-06-10_src_auth_jwt.py.md",
+      "name": "2026-06-10_project-a_src_auth_jwt.py",
+      "path": "code/2026-06-10_project-a_src_auth_jwt.py.md",
       "kind": "code",
       "project": "project-a",
       "snippet": "## Summary\nImplements JWT refresh with a sliding expiry window…",

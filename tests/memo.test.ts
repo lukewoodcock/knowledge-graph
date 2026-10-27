@@ -163,13 +163,13 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
   });
 
   /** Runs a code capture and returns the name of the code note it wrote. */
-  async function codeCapture(app: Express, filePath: string, session: string): Promise<string> {
+  async function codeCapture(app: Express, filePath: string, session: string, project = 'project-a'): Promise<string> {
     const run = await triggerAndWait(app, {
       file_path: filePath,
       language: 'typescript',
       description: `Work on ${filePath}`,
       session_id: session,
-      project: 'project-a',
+      project,
     });
     const code = run.body.notes.find((n: { agent: string }) => n.agent === 'documenter');
     return path.basename(code.note_path, '.md');
@@ -190,6 +190,26 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(content).toContain(`[[${cache}]]`);
     expect(content).toContain(`[[${metrics}]]`);
     expect(content).not.toContain(`[[${other}]]`);
+  });
+
+  test("a code-capture note's name holds its date, project and file path", async () => {
+    const name = await codeCapture(createApp(cfg), 'src/server.js', 'sess-1', 'shortlinks');
+
+    expect(name).toBe(`${today()}_shortlinks_src_server.js`);
+  });
+
+  test("two projects editing a same-named file on one day get separate notes, and the first session's memo keeps its link", async () => {
+    const app = createApp(cfg);
+    const fromA = await codeCapture(app, 'src/server.js', 'sess-1', 'project-a');
+    const memo = (await memoAndWait(app, MEMO)).body.memos[0];
+
+    const fromB = await codeCapture(app, 'src/server.js', 'sess-2', 'project-b');
+
+    expect(fromB).not.toBe(fromA);
+    const noteA = await request(app).get(`/webhook/knowledge-graph/notes/${encodeURIComponent(fromA)}`);
+    expect(noteA.body.frontmatter).toMatchObject({ project: 'project-a', session: 'sess-1' });
+    const related = await request(app).get(`/webhook/knowledge-graph/notes/${encodeURIComponent(memo.name)}/related`);
+    expect(related.body.outgoing.map((n: { name: string }) => n.name)).toEqual([fromA]);
   });
 
   test("a memo and its session's code note are related both ways in the graph", async () => {

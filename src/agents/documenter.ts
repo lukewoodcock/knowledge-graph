@@ -53,7 +53,7 @@ export async function runDocumenter(ctx: SwarmContext, cfg: Config): Promise<Not
   ], cfg.ollamaThink);
 
   const title = safeTitle(ctx.filePath || 'unknown');
-  const notePath = notePathIn(cfg.vaultPath, 'code', codeNoteName(ctx.today, ctx.filePath));
+  const notePath = notePathIn(cfg.vaultPath, 'code', codeNoteName(ctx.today, ctx.project, ctx.filePath));
   await writeNote(notePath, addFrontmatterFields(content, captureFields(ctx)));
 
   return { agent: 'documenter', status: 'success', notePath, title };

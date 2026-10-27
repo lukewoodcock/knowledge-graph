@@ -23,7 +23,7 @@ A token bucket per API key: 60 tokens, refilled at one per second, stored in Red
 - **In-memory buckets**: the API runs on three instances, so each would allow three times the limit.
 
 ## Same Session
-- [[2026-09-14_src_middleware_rateLimit.ts]]
+- [[2026-09-14_billing-service_src_middleware_rateLimit.ts]]
 
 ## Related Notes
 - [[2026-09-15_Fixed-window_rate_limits_let_a_client_send_twice_the_limit_across_a_window_boundary]]

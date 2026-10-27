@@ -128,8 +128,8 @@ It may ask to run a quick check over HTTP: approve it (a few seconds), or
 decline and `/remember` will save a todo to test it.
 
 When the turn ends, the capture hook sends one code capture per file. Watch
-the service console and the graph: `2026-10-27_src_rate-limit.js` and
-`2026-10-27_src_server.js` appear about 25 s and 45 s later, linked to the
+the service console and the graph: `2026-10-27_shortlinks_src_rate-limit.js`
+and `2026-10-27_shortlinks_src_server.js` appear about 25 s and 45 s later, linked to the
 billing-service rate limiter and the shortlinks todo.
 
 Talking point: the hook is async, so Claude never waits for it; captures run
@@ -164,7 +164,7 @@ Before I add rate limiting to POST /notes here: how did I rate-limit link creati
 
 Expected (rehearsal: 30 s): Claude loads the `recall` skill on its own, calls
 `search_notes`, opens the shortlinks decision memo, the new
-`2026-10-27_src_server.js` code note and the todo with `get_note`, and
+`2026-10-27_shortlinks_src_server.js` code note and the todo with `get_note`, and
 answers: a 5-token bucket refilling one every 12 s per client IP, 429 with
 `Retry-After`, a Map swept after 10 minutes; token bucket because a fixed
 window allows twice the limit across a boundary, IP because there are no API
@@ -194,8 +194,6 @@ Press Ctrl+O to show the hook's added context in the transcript.
 Talking point: for and against injection (examples/README.md): recall without
 asking, at the price of tokens on every prompt and recall you don't see.
 
-Leave the code as it is: see the known issue on same-named files below.
-
 ### 5. Close (30 s)
 
 Graph view: the new notes from project A, linked to the seed. One vault,
@@ -217,10 +215,6 @@ every project; the notes are plain markdown and the index rebuilds from them.
 
 ## Known issues
 
-- **Same-named files in two projects on one day.** A code note is named
-  `<date>_<file path>`, without the project, so if session B edits
-  `src/server.js` or creates `src/rate-limit.js` on demo day, its note
-  overwrites project A's. The project B prompts say "don't change any files".
 - **Headless runs** (`claude -p`, as in the rehearsal) run in untrusted
   folders: pass `--permission-mode acceptEdits` in project A and
   `--allowedTools "Skill(recall)"` in project B, or recall the agent starts on

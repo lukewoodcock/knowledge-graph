@@ -97,14 +97,23 @@ export function safeTitle(input: string, maxLen = 60): string {
     .substring(0, maxLen);
 }
 
-/** The name of the Documenter's note for a code capture. */
-export function codeNoteName(date: string, filePath: string): string {
-  return `${date}_${safeTitle(filePath || 'unknown')}`;
+/** `<project>_` when the capture named its project, so two projects' notes never share a name. */
+function projectPart(project: string | undefined): string {
+  const safe = project ? safeTitle(project) : '';
+  return safe ? `${safe}_` : '';
 }
 
-/** The name of the Researcher's note for a code capture. */
-export function researchNoteName(date: string, topic: string): string {
-  return `${date}_research_${safeTitle(topic || 'unknown')}`;
+/**
+ * The name of the Documenter's note for a code capture:
+ * `<date>_<project>_<file path>`, or `<date>_<file path>` without a project.
+ */
+export function codeNoteName(date: string, project: string | undefined, filePath: string): string {
+  return `${date}_${projectPart(project)}${safeTitle(filePath || 'unknown')}`;
+}
+
+/** The name of the Researcher's note for a code capture: `<date>_research_<project>_<topic>`. */
+export function researchNoteName(date: string, project: string | undefined, topic: string): string {
+  return `${date}_research_${projectPart(project)}${safeTitle(topic || 'unknown')}`;
 }
 
 /** The name a memo's note gets, before any number that makes it unique. */

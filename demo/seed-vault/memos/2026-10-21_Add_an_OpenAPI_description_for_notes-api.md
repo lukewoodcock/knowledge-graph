@@ -21,4 +21,4 @@ Write `openapi.yaml` describing `POST /notes`, `GET /notes` and `GET /notes/{id}
 The route table at the top of `src/app.js`.
 
 ## Related Notes
-- [[2026-10-20_src_app.js]]
+- [[2026-10-20_notes-api_src_app.js]]

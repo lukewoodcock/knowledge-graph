@@ -21,4 +21,4 @@ Sequential codes are guessable; see the open todo on rate limiting the create en
 
 ## Related Notes
 - [[2026-10-12_Short_codes_are_the_base62_encoding_of_an_auto-increment_counter]]
-- [[2026-10-12_src_server.js]]
+- [[2026-10-12_shortlinks_src_server.js]]

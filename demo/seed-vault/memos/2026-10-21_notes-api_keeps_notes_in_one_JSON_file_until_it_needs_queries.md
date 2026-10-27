@@ -24,5 +24,5 @@ SQLite, or a single JSON file?
 The JSON file, while the API only lists and reads notes by id. Move to SQLite when search or filtering arrives; the store's `list`, `get` and `create` functions are the only seam to change.
 
 ## Related Notes
-- [[2026-10-20_src_app.js]]
+- [[2026-10-20_notes-api_src_app.js]]
 - [[2026-10-21_Check_the_notes-api_data_file_with_jq]]

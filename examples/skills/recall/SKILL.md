@@ -27,7 +27,7 @@ With context injection on, the prompt arrives with a `<swarm-kg-reference-notes>
 2. **Open.** Call `get_note` on each hit whose snippet bears on the question, best first, usually one to three. Judge a hit by its snippet and project, not by its score alone: scores only rank hits within one search.
 3. **Follow links** when an opened note doesn't hold the whole answer: call `related_notes` on it and `get_note` on the neighbours that matter, such as the decision memo behind a code note, or the code notes from a memo's session.
 4. **Answer** the question from the notes you opened. Say which part the graph doesn't cover; anything you add from general knowledge is labelled as such. A todo is open while its `status` is `open`.
-5. **Cite.** Name the note behind every statement taken from the graph as a wikilink with its project, for example `[[2026-06-10_src_auth_jwt.ts]] (project-a)`, and end with a **Notes used** list of every note the answer draws on. Done when every statement from the graph traces to a cited note.
+5. **Cite.** Name the note behind every statement taken from the graph as a wikilink with its project, for example `[[2026-06-10_project-a_src_auth_jwt.ts]] (project-a)`, and end with a **Notes used** list of every note the answer draws on. Done when every statement from the graph traces to a cited note.
 
 When the graph has nothing on the question, say so plainly and name the searches you ran.
 
