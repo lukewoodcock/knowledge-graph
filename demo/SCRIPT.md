@@ -276,3 +276,17 @@ Then the whole demo again in one go with the final kit, from `setup.sh --force`:
 
 Machine time from reset to the end of step 4: **3 min 6 s**, which leaves
 about six minutes for the talking points inside ten.
+
+Again after the review fixes (project in note names, memos of one run
+linked to each other, type and kind kept apart), headless, from `setup.sh`
+on port 5694:
+
+| Step | Started | Elapsed | Result |
+|------|---------|---------|--------|
+| Set-up, reset, injection off, warm-up | 08:21:15 | 19 s | 13 seed notes |
+| 1. Session A | 08:21:42 | 42 s | Limiter written; its smoke test denied (headless). Code captures took 20 s and 19 s: `2026-10-27_shortlinks_src_rate-limit.js`, `2026-10-27_shortlinks_src_server.js` |
+| 2. `/remember` | 08:23:06 | 62 s | 3 memos (decision, two todos), each linked under Same Session to both code notes and the other two memos, with no Related Notes repeating them; memo run 25 s |
+| 3. Session B, injection off | 08:24:22 | 34 s | `recall` skill, two searches, `get_note` × 4; correct answer citing the new decision memo, the new `src/server.js` note and both new todos |
+| 4. Session B, injection on | 08:25:06 | 34 s | Injected the shortlinks todo, the new decision memo and the new verify todo; no search, `get_note` on those; same correct, cited answer |
+
+Machine time from reset to the end of step 4: **4 min 25 s**, warm-up included.
