@@ -60,6 +60,7 @@ describe('remember command', () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
     };
     service = await startServer(cfg);
     return `http://127.0.0.1:${(service.address() as { port: number }).port}`;

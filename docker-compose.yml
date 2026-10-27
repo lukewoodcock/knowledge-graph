@@ -52,6 +52,7 @@ services:
       OLLAMA_THINK: ${OLLAMA_THINK:-false}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-bge-large}
       RESEARCHER_ENABLED: ${RESEARCHER_ENABLED:-false}
+      NOTE_MAX_CHARS: ${NOTE_MAX_CHARS:-20000}
     volumes:
       # Mount your Obsidian vault here. Set VAULT_HOST_PATH in .env.
       - ${VAULT_HOST_PATH:-./vault}:/vault

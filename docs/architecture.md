@@ -83,8 +83,10 @@ prompt is searched and the few notes that clear the threshold are added.
   any captured file. Every MCP tool description and the `/recall` skill say so, and context
   injection wraps notes in a `<swarm-kg-reference-notes>` block that tells the
   agent not to follow them, with any copy of that tag inside a note escaped.
-- **A size cap on injected text.** At most three notes and 4,000 characters
-  per prompt, never more than 9,000.
+- **A size cap on recalled text.** Context injection adds at most three notes
+  and 4,000 characters per prompt, never more than 9,000. Opening a note
+  (`get_note`) returns at most 20,000 characters of it (`NOTE_MAX_CHARS`),
+  ending with a `[truncated: ...]` marker when it was cut.
 - **No secrets in memos.** `/remember` leaves out credentials, tokens and
   personal data entirely; keeping them would need an encrypted vault and an
   authenticated service first.

@@ -9,15 +9,27 @@ import { isNote, isSessionLog, linkTargets, noteName, NoteRef, noteRefFields } f
  * Reads go straight to the vault, which stays the only source of truth.
  */
 
-/** One note in full. */
+/** One note, in full up to a cap. */
 export interface NoteView {
   name: string;
   /** Path relative to the vault root, e.g. "memos/cache-decision.md". */
   path: string;
   /** Top-level frontmatter fields, as parseNote reads them. */
   frontmatter: Record<string, string>;
-  /** The note's markdown after its frontmatter. */
+  /** The note's markdown after its frontmatter, cut short (with a marker saying so) past the cap. */
   content: string;
+  /** Present, and true, when `content` was cut short. */
+  truncated?: true;
+}
+
+/**
+ * The note's text up to `maxChars` characters; past that, its first
+ * `maxChars` characters and a marker saying how much was left out.
+ */
+export function capContent(content: string, maxChars: number): { content: string; truncated?: true } {
+  if (content.length <= maxChars) return { content };
+  const marker = `\n\n… [truncated: showing ${maxChars} of ${content.length} characters]`;
+  return { content: content.slice(0, maxChars).trimEnd() + marker, truncated: true };
 }
 
 async function notePaths(vaultPath: string): Promise<string[]> {
@@ -28,12 +40,13 @@ async function notePaths(vaultPath: string): Promise<string[]> {
  * The note with this name, or null when there is none. Names are matched
  * against the vault's own files, so a name can never reach outside it.
  * Two notes sharing a name in different folders: the first path wins.
+ * Its text is cut at `maxChars` characters (see capContent).
  */
-export async function readNote(vaultPath: string, name: string): Promise<NoteView | null> {
+export async function readNote(vaultPath: string, name: string, maxChars: number): Promise<NoteView | null> {
   const relPath = (await notePaths(vaultPath)).find(p => noteName(p) === name);
   if (!relPath) return null;
   const { frontmatter, body } = parseNote(await fs.readFile(path.join(vaultPath, relPath), 'utf8'));
-  return { name, path: relPath, frontmatter, content: body.replace(/^(\r?\n)+/, '') };
+  return { name, path: relPath, frontmatter, ...capContent(body.replace(/^(\r?\n)+/, ''), maxChars) };
 }
 
 /** A linked note, described enough to decide whether to open it. */

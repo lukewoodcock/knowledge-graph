@@ -56,7 +56,7 @@ describe('MCP server for recall', () => {
   }
 
   /** Starts the real service on a free port and returns its base URL. */
-  async function startService(): Promise<string> {
+  async function startService(overrides: Partial<Config> = {}): Promise<string> {
     const cfg: Config = {
       host: '127.0.0.1',
       port: 0,
@@ -66,6 +66,8 @@ describe('MCP server for recall', () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
+      ...overrides,
     };
     service = await startServer(cfg);
     return `http://127.0.0.1:${(service.address() as { port: number }).port}`;
@@ -173,6 +175,17 @@ describe('MCP server for recall', () => {
       frontmatter: { title: 'Cache invalidation decision', kind: 'decision', project: 'project-b' },
       content: '## Summary\nWe chose write-through caching.',
     });
+  });
+
+  test("get_note returns at most the service's cap of a long note, marked as cut short", async () => {
+    await writeVaultNote('code/huge.md', ['---', 'title: "Huge"', '---', '', 'docker '.repeat(10_000)].join('\n'));
+    const c = await connect(await startService({ noteMaxChars: 1000 }));
+
+    const body = json(await callTool(c, 'get_note', { name: 'huge' }));
+
+    expect(body.content.length).toBeLessThan(1100);
+    expect(body.content).toMatch(/\[truncated: showing 1000 of \d+ characters\]$/);
+    expect(body.truncated).toBe(true);
   });
 
   test('related_notes returns outgoing and incoming links', async () => {

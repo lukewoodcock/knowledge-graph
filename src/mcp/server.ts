@@ -92,7 +92,9 @@ export function buildMcpServer(baseUrl: string): McpServer {
   server.registerTool(
     'get_note',
     {
-      description: `Open one note from the knowledge graph by name and read its full content and frontmatter. ${REFERENCE_ONLY}`,
+      description:
+        'Open one note from the knowledge graph by name and read its content and frontmatter. ' +
+        `A very long note is cut short, marked "[truncated: ...]" at the end. ${REFERENCE_ONLY}`,
       inputSchema: { name: z.string().min(1).describe('The note name, as search_notes or related_notes gives it') },
     },
     ({ name }) => call(notePath(name)),

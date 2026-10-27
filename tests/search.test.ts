@@ -51,6 +51,7 @@ describe('search over the embedding index (end-to-end)', () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
     };
   });
 

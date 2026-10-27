@@ -42,6 +42,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
     };
   });
 

@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import request from './helpers/http';
 import { createApp } from '../src/server';
-import { Config } from '../src/config';
+import { Config, loadConfig } from '../src/config';
 import { close, createMockOllama, createMockOllamaState, listen, resetMockOllamaState } from './helpers/mock-ollama';
 
 const NOTES_URL = '/webhook/knowledge-graph/notes';
@@ -39,6 +39,7 @@ describe('note and related endpoints (end-to-end)', () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
     };
   });
 
@@ -69,6 +70,27 @@ describe('note and related endpoints (end-to-end)', () => {
       frontmatter: { title: 'Cache invalidation decision', kind: 'decision', project: 'project-b' },
       content: '## Summary\nWe chose write-through caching.',
     });
+  });
+
+  test("a note longer than the cap is cut short with a marker saying so", async () => {
+    await writeVaultNote('code/long.md', ['---', 'title: "Long"', '---', '', 'a'.repeat(100)].join('\n'));
+    await writeVaultNote('code/short.md', ['---', 'title: "Short"', '---', '', 'a'.repeat(40)].join('\n'));
+    const app = createApp({ ...cfg, noteMaxChars: 40 });
+
+    const long = await request(app).get(`${NOTES_URL}/long`);
+    const short = await request(app).get(`${NOTES_URL}/short`);
+
+    expect(long.body.content).toBe(`${'a'.repeat(40)}\n\n… [truncated: showing 40 of 100 characters]`);
+    expect(long.body.truncated).toBe(true);
+    expect(long.body.frontmatter).toEqual({ title: 'Long' });
+    expect(short.body.content).toBe('a'.repeat(40));
+    expect(short.body).not.toHaveProperty('truncated');
+  });
+
+  test('the cap on note text is a setting, 20,000 characters by default', () => {
+    expect(loadConfig({}).noteMaxChars).toBe(20_000);
+    expect(loadConfig({ NOTE_MAX_CHARS: '5000' }).noteMaxChars).toBe(5000);
+    expect(loadConfig({ NOTE_MAX_CHARS: 'lots' }).noteMaxChars).toBe(20_000);
   });
 
   test('asking for a note that does not exist is a clear not-found error', async () => {

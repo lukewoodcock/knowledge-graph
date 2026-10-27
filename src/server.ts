@@ -274,10 +274,10 @@ export function createApp(cfg: Config): Express {
     }
   });
 
-  // Recall: one note in full, by name.
+  // Recall: one note by name, in full up to cfg.noteMaxChars characters.
   app.get('/webhook/knowledge-graph/notes/:name', async (req, res) => {
     try {
-      const note = await readNote(cfg.vaultPath, req.params.name);
+      const note = await readNote(cfg.vaultPath, req.params.name, cfg.noteMaxChars);
       if (!note) {
         res.status(404).json({ error: `No note named "${req.params.name}"` });
         return;

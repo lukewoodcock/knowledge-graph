@@ -338,7 +338,11 @@ curl -s http://localhost:5678/webhook/knowledge-graph/notes/cache-decision | jq 
 }
 ```
 
-`content` is the note's markdown after its frontmatter. The related endpoint
+`content` is the note's markdown after its frontmatter, up to
+`NOTE_MAX_CHARS` characters (20,000 by default), so a huge note can't flood an
+agent's context. A longer note is cut there and ends with a marker,
+`… [truncated: showing 20000 of 31250 characters]`, and the reply also holds
+`"truncated": true`. The related endpoint
 lists the notes a note links to (`outgoing`) and the notes that link to it
 (`incoming`), each as `{name, path, title, type, kind, project}`. Session logs,
 links to notes that don't exist, and self-links are left out.
@@ -593,6 +597,7 @@ runs typecheck, tests, and a production build on every PR.
 | `OLLAMA_EMBED_MODEL` | `bge-large` | Ollama embedding model for search. Changing it re-embeds every note |
 | `OLLAMA_THINK` | `false` | Let thinking models reason first. ~20x slower on a 9B model |
 | `RESEARCHER_ENABLED` | `false` | `true` also writes a research note for every code capture |
+| `NOTE_MAX_CHARS` | `20000` | Most characters of a note's text the note endpoint (and `get_note`) returns; longer notes are cut with a marker |
 | `HOST` | `127.0.0.1` | Address the service listens on (compose sets `0.0.0.0` inside the container and publishes on loopback) |
 | `PORT` | `5678` | Webhook service port |
 
