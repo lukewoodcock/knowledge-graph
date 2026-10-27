@@ -299,6 +299,32 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(content).toContain(`## Same Session\n- [[${cache}]]`);
   });
 
+  test('the Linker never repeats a link already under Same Session', async () => {
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    mockState.linkTargets = [memoPath(MEMO.title)];
+    mockState.links = [`[[${cache}]]`, '[[existing-note]]', `[[${cache}|the cache note]]`];
+
+    const run = await memoAndWait(app, MEMO);
+
+    const content = await fs.readFile(run.body.memos[0].note_path, 'utf8');
+    expect(content.slice(content.indexOf('## Related Notes'))).toBe('## Related Notes\n- [[existing-note]]\n');
+  });
+
+  test('when the Linker only suggests notes already under Same Session, it writes no Related Notes', async () => {
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    mockState.linkTargets = [memoPath(MEMO.title)];
+    mockState.links = [`[[${cache}]]`];
+
+    const run = await memoAndWait(app, MEMO);
+
+    expect(run.body.linker.links_written).toBe(0);
+    expect(await fs.readFile(run.body.memos[0].note_path, 'utf8')).not.toContain('## Related Notes');
+  });
+
   test("the Linker is told about the memo, its kind and title", async () => {
     await writeVaultNote('notes/existing-note.md', '# Existing\n');
     await memoAndWait(createApp(cfg), MEMO);
@@ -425,6 +451,8 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
   });
 
   test('a memo sent while a code capture is running waits its turn in the same queue', async () => {
+    // A note neither links to yet, so both runs ask the Linker.
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
     const app = createApp(cfg);
     mockState.delayMs = 30;
     const code = await request(app)

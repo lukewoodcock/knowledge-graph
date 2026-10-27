@@ -296,8 +296,9 @@ that search once the index picks up the edit (on the next start, or
 `npm run reindex`).
 
 The Linker uses the same search to pick link candidates: each new note's title
-and body are the query, and the ten best hits (never the note itself) are the
-only notes the model may link it to. Links to anything else are dropped, and
+and body are the query, and the ten best hits (never the note itself, nor a
+note it already links to, such as a memo's Same Session notes) are the only
+notes the model may link it to. Links to anything else are dropped, and
 with nothing to link to the model isn't asked at all. The new note doesn't
 need to be indexed for this, so a run indexes its notes once, after the
 Linker. Since research notes are never search hits, they aren't link
