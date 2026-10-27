@@ -76,8 +76,9 @@ prompt is searched and the few notes that clear the threshold are added.
 ## Safety
 
 - **Loopback only.** There is no authentication, so the service binds to
-  `127.0.0.1` by default and compose publishes its port on loopback only:
-  nobody on the same wifi can send captures or read notes. The MCP server
+  `127.0.0.1` by default and compose publishes its port, and Ollama's, on
+  loopback only (with `docker run`, `-p 127.0.0.1:5678:5678`): nobody on the
+  same wifi can send captures, read notes or use the models. The MCP server
   speaks stdio and has no listener at all.
 - **Recalled notes are data, not instructions.** Notes can hold text from
   any captured file. Every MCP tool description and the `/recall` skill say so, and context

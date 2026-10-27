@@ -43,7 +43,19 @@ docker exec -it ollama ollama pull qwen3.5:9b
 docker exec -it ollama ollama pull bge-large   # embeddings for search
 ```
 
-Podman on macOS works identically: `podman compose up -d --build`.
+Podman on macOS works identically: `podman compose up -d --build`. Compose
+publishes both the service (5678) and Ollama (11434) on the host's loopback
+only.
+
+Without compose, publish the image's port on loopback too: the image listens
+on every interface inside the container (`HOST=0.0.0.0`), so the `-p` address
+is what keeps it private.
+
+```bash
+docker build -t swarm-kg .
+docker run -d -p 127.0.0.1:5678:5678 -v /path/to/vault:/vault \
+  -e OLLAMA_URL=http://host.docker.internal:11434 swarm-kg
+```
 
 ### Trigger from the IDE
 
@@ -242,9 +254,11 @@ server on localhost by default; on macOS allow it with
 
 There is no authentication, so the service listens on the loopback interface
 (`127.0.0.1`) by default: only your own machine can send captures or read
-notes. `HOST` changes the bind address. `docker compose` publishes the port
-on the host's loopback only (`127.0.0.1:5678`), and sets `HOST=0.0.0.0` inside
-the container so the published port can reach the service.
+notes. `HOST` changes the bind address. The Docker image sets `HOST=0.0.0.0`
+inside the container so a published port can reach the service, so publish it
+on the host's loopback only: `docker compose` does (`127.0.0.1:5678`, and
+`127.0.0.1:11434` for Ollama), and with `docker run` use
+`-p 127.0.0.1:5678:5678`, never a bare `-p 5678:5678`.
 
 ### Search the graph
 
@@ -598,7 +612,7 @@ runs typecheck, tests, and a production build on every PR.
 | `OLLAMA_THINK` | `false` | Let thinking models reason first. ~20x slower on a 9B model |
 | `RESEARCHER_ENABLED` | `false` | `true` also writes a research note for every code capture |
 | `NOTE_MAX_CHARS` | `20000` | Most characters of a note's text the note endpoint (and `get_note`) returns; longer notes are cut with a marker |
-| `HOST` | `127.0.0.1` | Address the service listens on (compose sets `0.0.0.0` inside the container and publishes on loopback) |
+| `HOST` | `127.0.0.1` | Address the service listens on (the Docker image sets `0.0.0.0` inside the container; publish it on loopback) |
 | `PORT` | `5678` | Webhook service port |
 
 ## Changes from the n8n version
