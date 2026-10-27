@@ -148,7 +148,8 @@ and waits for the run, which queues behind the code captures (rehearsal: 70 s
 in all, the memo run itself 25 s). It reports each memo's name, kind and
 links. Rehearsal: a decision ("Rate-limit shortlinks POST /links with an
 in-memory per-IP token bucket"), a todo (verify it end to end) and a snippet
-(the check command), each linked under **Same Session** to the two code notes.
+(the check command), each linked under **Same Session** to the two code notes
+and to the other two memos.
 Open the decision memo in Obsidian: context paragraph, choice, rejected
 alternatives, consequences.
 

@@ -11,15 +11,22 @@ export interface MemoNote {
   notePath: string;
   /** The note's name: its file name without `.md`, as a link names it. */
   name: string;
-  /** Names of the code-capture notes from the memo's session that it links to. */
+  /**
+   * Names of the notes it links to under Same Session: the code-capture notes
+   * from its session, then the other memos of its session saved in the same run.
+   */
   sessionLinks: string[];
 }
 
-/** A free path for a memo's note: `memos/<date>_<title>.md`, numbered if taken. */
-async function freeNotePath(cfg: Config, date: string, title: string): Promise<string> {
+/**
+ * A free path for a memo's note: `memos/<date>_<title>.md`, numbered if a
+ * note has it already or `taken` (the run's other memos) holds it.
+ */
+async function freeNotePath(cfg: Config, date: string, title: string, taken: Set<string>): Promise<string> {
   const base = memoNoteName(date, title);
   for (let n = 1; ; n++) {
     const candidate = notePath(cfg.vaultPath, 'memos', n === 1 ? base : `${base}_${n}`);
+    if (taken.has(candidate)) continue;
     try {
       await fs.access(candidate);
     } catch {
@@ -89,18 +96,29 @@ export async function memoLinks(note: MemoNote): Promise<string[]> {
 }
 
 /**
- * Writes each memo into the memos folder, linked to every note the code
- * captures of its session wrote. These links are the service's, not the
+ * Writes each memo into the memos folder, linked under Same Session to
+ * every note the code captures of its session wrote and to the other memos
+ * of its session in this run. These links are the service's, not the
  * Linker's: they hold whatever the Linker makes of the memo.
  */
 export async function writeMemos(memos: Memo[], date: string, cfg: Config): Promise<MemoNote[]> {
   const bySession = await codeNotesBySession(cfg);
-  const written: MemoNote[] = [];
+
+  // Every memo's path first, so each can link to the memos written after it.
+  const taken = new Set<string>();
+  const placed: Array<{ memo: Memo; notePath: string; name: string }> = [];
   for (const memo of memos) {
-    const sessionLinks = bySession.get(memo.session) ?? [];
-    const fullPath = await freeNotePath(cfg, date, memo.title);
-    await writeNote(fullPath, renderMemo(memo, date, sessionLinks));
-    written.push({ memo, notePath: fullPath, name: noteName(fullPath), sessionLinks });
+    const fullPath = await freeNotePath(cfg, date, memo.title, taken);
+    taken.add(fullPath);
+    placed.push({ memo, notePath: fullPath, name: noteName(fullPath) });
+  }
+
+  const written: MemoNote[] = [];
+  for (const p of placed) {
+    const sameRun = placed.filter(o => o !== p && o.memo.session === p.memo.session).map(o => o.name);
+    const sessionLinks = [...(bySession.get(p.memo.session) ?? []), ...sameRun];
+    await writeNote(p.notePath, renderMemo(p.memo, date, sessionLinks));
+    written.push({ ...p, sessionLinks });
   }
   return written;
 }

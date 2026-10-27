@@ -225,7 +225,31 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(fromMemo.body.outgoing.map((n: { name: string }) => n.name)).toEqual([cache]);
   });
 
-  test('memos do not link to other memos through the session rule', async () => {
+  test('memos saved in the same run link to each other, and to the code notes, under Same Session', async () => {
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    const todo = { ...MEMO, kind: 'todo', title: 'Add cache metrics', body: 'Count cache hits.' };
+    const otherSession = { ...MEMO, title: 'Elsewhere', session_id: 'sess-2' };
+
+    const run = await memoAndWait(app, [MEMO, todo, otherSession]);
+
+    const [decision, metrics, elsewhere] = run.body.memos;
+    expect(decision.links).toEqual([cache, metrics.name]);
+    expect(metrics.links).toEqual([cache, decision.name]);
+    expect(elsewhere.links).toEqual([]);
+    const content = await fs.readFile(decision.note_path, 'utf8');
+    expect(content).toContain(`## Same Session\n- [[${cache}]]\n- [[${metrics.name}]]`);
+  });
+
+  test('two memos with the same title in one run each link to the other by its own name', async () => {
+    const run = await memoAndWait(createApp(cfg), [MEMO, { ...MEMO, body: 'Another take.' }]);
+
+    const [a, b] = run.body.memos;
+    expect(a.links).toEqual([b.name]);
+    expect(b.links).toEqual([a.name]);
+  });
+
+  test('memos do not link to memos from earlier runs through the session rule', async () => {
     const app = createApp(cfg);
     const first = await memoAndWait(app, MEMO);
 

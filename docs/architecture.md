@@ -15,7 +15,7 @@ flowchart LR
     Q["Capture queue<br/>one run at a time"]
     DOC["Documenter"]
     RES["Researcher<br/>off by default"]
-    MEMO["Memo notes, linked<br/>to same-session code<br/>notes by rule"]
+    MEMO["Memo notes, linked<br/>to same-session code<br/>notes and each other<br/>by rule"]
     LNK["Linker<br/>picks from the 10<br/>most similar notes"]
   end
 
@@ -104,7 +104,8 @@ no change to it ([ADR 0001](adr/0001-markdown-vault-is-the-seam.md)).
 
 - Sections over about 1,500 characters are split again at paragraph breaks,
   keeping their heading; session logs are left out of search as well as linking.
-- Same Session links go only to code-capture notes, never to other memos.
+- Same Session links go to the session's code-capture notes and to the other
+  memos sent in the same request, never to memos from earlier requests.
 - Context injection skips prompts starting with `/`, so `/recall` does its
   own recall. The 0.6 threshold was measured with `bge-large`.
 - `/remember` and `/recall` ship as example skills with the MCP config.

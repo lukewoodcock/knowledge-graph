@@ -149,9 +149,11 @@ capture, and the run joins the same queue.
 The run writes each memo to `vault/memos/<date>_<title>.md` with `kind`,
 `project` and `session` (and `files`) in its frontmatter; todos also get
 `status: open`. The service links each memo, under `## Same Session`, to every
-note the code captures of its session wrote (never to notes from other
-sessions, and not to other memos). The Linker then adds its similarity links
-under `## Related Notes`, and the memos are indexed. The finished run lists
+note the code captures of its session wrote and to the other memos of its
+session sent in the same request (never to notes from other sessions, nor to
+memos from earlier requests). The Linker then adds its similarity links under
+`## Related Notes`, never repeating a note the memo already links to, and the
+memos are indexed. The finished run lists
 each memo with all its links, each named once:
 
 ```json
