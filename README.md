@@ -559,7 +559,7 @@ demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"    # before each run
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 184 tests, a couple of seconds, no Docker needed
+npm test             # vitest — 203 tests, a few seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -570,12 +570,15 @@ src/
 ├── index.ts            # entrypoint
 ├── server.ts           # Express app: webhook + orchestration (replaces n8n Orchestrator)
 ├── config.ts           # env var loading
+├── env.ts              # settings helpers shared with the clients: service URL, whole numbers
 ├── ollama.ts           # /api/chat and /api/embed clients + response parsing
 ├── embedding-index.ts  # notes embedded by section, the index file, search
-├── memos.ts            # memo validation, memo notes and their same-session links
+├── requests.ts         # pure validation of memo and search request bodies
+├── memos.ts            # memo notes and their same-session links
 ├── reindex.ts          # npm run reindex: asks the service to rebuild the index
 ├── remember.ts         # dist/remember.js: what /remember runs to send memos and report them
-├── vault.ts            # safeTitle, frontmatter parsing and writing, file helpers
+├── vault.ts            # frontmatter parsing and writing, file helpers
+├── vault-format.ts     # what writers and readers agree on: folders, note names, link sections, wikilinks
 ├── graph.ts            # one note by name, and the notes linked to and from it
 ├── agents/
 │   ├── documenter.ts

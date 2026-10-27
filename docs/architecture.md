@@ -105,10 +105,27 @@ no change to it ([ADR 0001](adr/0001-markdown-vault-is-the-seam.md)).
 
 ## Where the build differs from the spec
 
+- The capture hook only captures files inside the session's project (the top
+  of its git repository), not every file Claude changes: Claude also edits
+  files elsewhere, such as its own memory files under `~/.claude/projects/`,
+  and those aren't the project's code. Files in the vault or the session's
+  scratchpad are skipped too.
+- Code-capture notes are named `<date>_<project>_<file path>`, so two projects
+  changing a same-named file on one day get a note each.
+- Search results carry the note's `type` (`code`, `memo`) and, for memos
+  only, its `kind`, rather than one kind field for both, plus its `status`.
+  Search filters by all three, so "open todos" is `kind: todo, status: open`.
+- Research notes are left out of recall by their own `type: research`,
+  wherever they live, so the read side knows nothing about the Researcher's
+  folder.
 - Sections over about 1,500 characters are split again at paragraph breaks,
   keeping their heading; session logs are left out of search as well as linking.
 - Same Session links go to the session's code-capture notes and to the other
-  memos sent in the same request, never to memos from earlier requests.
+  memos sent in the same request, never to memos from earlier requests. The
+  Linker never offers a note the new note already links to, so it never
+  repeats a Same Session link.
+- Opening a note returns at most `NOTE_MAX_CHARS` (20,000) characters of it,
+  the cap on recalled text covering `get_note` as well as context injection.
 - Context injection skips prompts starting with `/`, so `/recall` does its
   own recall. The 0.6 threshold was measured with `bge-large`.
 - `/remember` and `/recall` ship as example skills with the MCP config.
