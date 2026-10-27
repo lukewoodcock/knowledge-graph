@@ -1,6 +1,7 @@
 // Pure pieces of the Stop hook: config, skip rules, and webhook payloads.
 import * as path from 'path';
 import { FileEdit, Turn, uniqueFiles } from './transcript';
+import { positiveInt } from '../env';
 
 /** The subset of the Stop hook stdin JSON we use. */
 export interface StopHookInput {
@@ -38,18 +39,13 @@ export interface HookConfig {
 
 export const DEFAULT_URL = 'http://localhost:5678/webhook/knowledge-graph/trigger';
 
-function int(v: string | undefined, fallback: number): number {
-  const n = parseInt(v ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
 export function loadHookConfig(env: NodeJS.ProcessEnv = process.env): HookConfig {
   return {
     url: env.SWARM_KG_URL || DEFAULT_URL,
     disabled: env.SWARM_KG_DISABLE === '1',
     vaultPath: env.SWARM_KG_VAULT_PATH || undefined,
-    timeoutMs: int(env.SWARM_KG_TIMEOUT_MS, 2000),
-    maxFiles: int(env.SWARM_KG_MAX_FILES, 5),
+    timeoutMs: positiveInt(env.SWARM_KG_TIMEOUT_MS, 2000),
+    maxFiles: positiveInt(env.SWARM_KG_MAX_FILES, 5),
     maxCodeChars: 4000,
     maxDescriptionChars: 1000,
     debug: env.SWARM_KG_DEBUG === '1',

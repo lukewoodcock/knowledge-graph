@@ -1,15 +1,15 @@
-import * as path from 'path';
 import { Config } from '../config';
 import { chat } from '../ollama';
-import { addFrontmatterFields, captureFields, safeTitle, writeNote } from '../vault';
-import { SwarmContext, NoteResult } from '../types';
+import { captureFields, setFrontmatterFields, writeNote } from '../vault';
+import { codeNoteName, notePath as notePathIn, safeTitle } from '../vault-format';
+import { CodeCapture, WrittenNote } from '../types';
 
 const SYSTEM_PROMPT =
   'You are a technical documentation assistant. Your job is to produce a concise, ' +
   'structured markdown note for a developer knowledge base. Always respond with ' +
   'ONLY the markdown document — no preamble, no explanation outside the document.';
 
-function userPrompt(ctx: SwarmContext): string {
+function userPrompt(ctx: CodeCapture): string {
   return `Generate a markdown knowledge-base note for the following development activity.
 
 File: ${ctx.filePath}
@@ -46,15 +46,15 @@ Then write:
  * Summarises the current IDE activity into a structured note and writes it
  * to vault/code/.
  */
-export async function runDocumenter(ctx: SwarmContext, cfg: Config): Promise<NoteResult> {
+export async function runDocumenter(ctx: CodeCapture, cfg: Config): Promise<WrittenNote> {
   const content = await chat(cfg.ollamaUrl, cfg.ollamaModel, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt(ctx) },
   ], cfg.ollamaThink);
 
   const title = safeTitle(ctx.filePath || 'unknown');
-  const notePath = path.join(cfg.vaultPath, 'code', `${ctx.today}_${title}.md`);
-  await writeNote(notePath, addFrontmatterFields(content, captureFields(ctx)));
+  const notePath = notePathIn(cfg.vaultPath, 'code', codeNoteName(ctx.today, ctx.project, ctx.filePath));
+  await writeNote(notePath, setFrontmatterFields(content, captureFields('code', ctx)));
 
-  return { agent: 'documenter', status: 'success', notePath, title };
+  return { type: 'code', notePath, title };
 }

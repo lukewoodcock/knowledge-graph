@@ -1,5 +1,7 @@
 // Pure pieces of the context-injection hook: config and the block of
 // reference notes added to the prompt.
+import { positiveInt, serviceUrl } from '../env';
+import type { NoteRef } from '../vault-format';
 
 /** The subset of the UserPromptSubmit hook stdin JSON we use. */
 export interface PromptHookInput {
@@ -10,11 +12,7 @@ export interface PromptHookInput {
 }
 
 /** One result from the service's search endpoint (see SearchHit in src/embedding-index.ts). */
-export interface SearchResult {
-  name: string;
-  path: string;
-  kind: string | null;
-  project: string | null;
+export interface SearchResult extends NoteRef {
   snippet: string;
   score: number;
 }
@@ -33,8 +31,6 @@ export interface InjectionConfig {
   debug: boolean;
 }
 
-/** Same setting and default as the MCP server and `npm run reindex`. */
-export const DEFAULT_SERVICE_URL = 'http://127.0.0.1:5678';
 /**
  * Measured with bge-large against ten typical code notes: the right note for
  * a related prompt scored 0.63 to 0.81, while unrelated prompts ("fix the
@@ -51,11 +47,6 @@ export const MAX_CHARS_LIMIT = 9000;
 /** A warm search takes tens of milliseconds; a cold embedding model about a second. */
 export const DEFAULT_TIMEOUT_MS = 1500;
 
-function int(v: string | undefined, fallback: number): number {
-  const n = parseInt(v ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
 function score(v: string | undefined, fallback: number): number {
   const n = parseFloat(v ?? '');
   return Number.isFinite(n) ? n : fallback;
@@ -63,12 +54,12 @@ function score(v: string | undefined, fallback: number): number {
 
 export function loadInjectionConfig(env: NodeJS.ProcessEnv = process.env): InjectionConfig {
   return {
-    searchUrl: `${(env.SWARM_KG_SERVICE_URL || DEFAULT_SERVICE_URL).replace(/\/+$/, '')}/webhook/knowledge-graph/search`,
+    searchUrl: `${serviceUrl(env)}/webhook/knowledge-graph/search`,
     disabled: env.SWARM_KG_DISABLE === '1',
     minScore: score(env.SWARM_KG_MIN_SCORE, DEFAULT_MIN_SCORE),
-    maxNotes: int(env.SWARM_KG_MAX_NOTES, DEFAULT_MAX_NOTES),
-    maxChars: Math.min(int(env.SWARM_KG_MAX_CONTEXT_CHARS, DEFAULT_MAX_CHARS), MAX_CHARS_LIMIT),
-    timeoutMs: int(env.SWARM_KG_SEARCH_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+    maxNotes: positiveInt(env.SWARM_KG_MAX_NOTES, DEFAULT_MAX_NOTES),
+    maxChars: Math.min(positiveInt(env.SWARM_KG_MAX_CONTEXT_CHARS, DEFAULT_MAX_CHARS), MAX_CHARS_LIMIT),
+    timeoutMs: positiveInt(env.SWARM_KG_SEARCH_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
     debug: env.SWARM_KG_DEBUG === '1',
   };
 }
@@ -109,7 +100,9 @@ function neutralise(text: string): string {
 }
 
 function renderNote(r: SearchResult): string {
-  const about = [r.path, r.project && `project ${r.project}`, r.kind && `kind ${r.kind}`].filter(Boolean).join(', ');
+  const about = [r.path, r.project && `project ${r.project}`, r.type && `type ${r.type}`, r.kind && `kind ${r.kind}`]
+    .filter(Boolean)
+    .join(', ');
   return neutralise(`### Note: ${r.name} (${about})\n${r.snippet.trim()}`);
 }
 

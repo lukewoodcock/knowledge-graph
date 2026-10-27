@@ -42,6 +42,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
     };
   });
 
@@ -330,6 +331,70 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     } finally {
       await new Promise<void>(resolve => flaky.close(() => resolve()));
     }
+  });
+
+  /**
+   * A mock Ollama whose Linker chat replies or embed calls fail with a 500;
+   * the Documenter's replies come from the shared mock.
+   */
+  async function withFailing(fail: 'linker' | 'embed', body: (ollamaUrl: string) => Promise<void>): Promise<void> {
+    const failing = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', c => (raw += c));
+      req.on('end', async () => {
+        if (req.url === '/api/embed') {
+          if (fail === 'embed') {
+            res.writeHead(500).end('embed down');
+            return;
+          }
+          replyToEmbed(mockState, raw, res);
+          return;
+        }
+        const system: string = JSON.parse(raw).messages?.[0]?.content ?? '';
+        if (system.includes('linking')) {
+          res.writeHead(500).end('linker down');
+          return;
+        }
+        const reply = await fetch(`http://127.0.0.1:${mockPort}/api/chat`, { method: 'POST', body: raw });
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(await reply.text());
+      });
+    });
+    const port = await listen(failing);
+    try {
+      await body(`http://127.0.0.1:${port}`);
+    } finally {
+      await close(failing);
+    }
+  }
+
+  test('a failed Linker makes a code capture partial: the note is written, reported and still indexed', async () => {
+    // Something for the Linker to link to, so it asks the model.
+    await fs.writeFile(path.join(vaultDir, 'existing-note.md'), 'Notes on jwt.\n', 'utf8');
+    await withFailing('linker', async ollamaUrl => {
+      const app = createApp({ ...cfg, ollamaUrl });
+
+      const res = await triggerAndWait(app, PAYLOAD);
+
+      expect(res.body.status).toBe('partial');
+      expect(res.body.errors.join(' ')).toContain('linker');
+      expect(res.body.linker).toEqual({ status: 'error', links_written: 0 });
+      const [note] = res.body.notes;
+      expect(note.agent).toBe('documenter');
+      await expect(fs.access(note.note_path)).resolves.toBeUndefined();
+      const search = await request(app).post('/webhook/knowledge-graph/search').send({ query: 'jwt', type: 'code' });
+      expect(search.body.results.map((r: { name: string }) => r.name)).toEqual([path.basename(note.note_path, '.md')]);
+    });
+  });
+
+  test("a failed search for the Linker's candidates makes a code capture partial, with its note still written and reported", async () => {
+    await withFailing('embed', async ollamaUrl => {
+      const res = await triggerAndWait(createApp({ ...cfg, ollamaUrl }), PAYLOAD);
+
+      expect(res.body.status).toBe('partial');
+      expect(res.body.errors.join(' ')).toContain('linker');
+      expect(res.body.notes).toHaveLength(1);
+      await expect(fs.access(res.body.notes[0].note_path)).resolves.toBeUndefined();
+    });
   });
 
   test('healthz responds ok', async () => {

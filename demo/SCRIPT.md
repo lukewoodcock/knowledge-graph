@@ -128,8 +128,8 @@ It may ask to run a quick check over HTTP: approve it (a few seconds), or
 decline and `/remember` will save a todo to test it.
 
 When the turn ends, the capture hook sends one code capture per file. Watch
-the service console and the graph: `2026-10-27_src_rate-limit.js` and
-`2026-10-27_src_server.js` appear about 25 s and 45 s later, linked to the
+the service console and the graph: `2026-10-27_shortlinks_src_rate-limit.js`
+and `2026-10-27_shortlinks_src_server.js` appear about 25 s and 45 s later, linked to the
 billing-service rate limiter and the shortlinks todo.
 
 Talking point: the hook is async, so Claude never waits for it; captures run
@@ -148,7 +148,8 @@ and waits for the run, which queues behind the code captures (rehearsal: 70 s
 in all, the memo run itself 25 s). It reports each memo's name, kind and
 links. Rehearsal: a decision ("Rate-limit shortlinks POST /links with an
 in-memory per-IP token bucket"), a todo (verify it end to end) and a snippet
-(the check command), each linked under **Same Session** to the two code notes.
+(the check command), each linked under **Same Session** to the two code notes
+and to the other two memos.
 Open the decision memo in Obsidian: context paragraph, choice, rejected
 alternatives, consequences.
 
@@ -164,7 +165,7 @@ Before I add rate limiting to POST /notes here: how did I rate-limit link creati
 
 Expected (rehearsal: 30 s): Claude loads the `recall` skill on its own, calls
 `search_notes`, opens the shortlinks decision memo, the new
-`2026-10-27_src_server.js` code note and the todo with `get_note`, and
+`2026-10-27_shortlinks_src_server.js` code note and the todo with `get_note`, and
 answers: a 5-token bucket refilling one every 12 s per client IP, 429 with
 `Retry-After`, a Map swept after 10 minutes; token bucket because a fixed
 window allows twice the limit across a boundary, IP because there are no API
@@ -194,8 +195,6 @@ Press Ctrl+O to show the hook's added context in the transcript.
 Talking point: for and against injection (examples/README.md): recall without
 asking, at the price of tokens on every prompt and recall you don't see.
 
-Leave the code as it is: see the known issue on same-named files below.
-
 ### 5. Close (30 s)
 
 Graph view: the new notes from project A, linked to the seed. One vault,
@@ -217,10 +216,6 @@ every project; the notes are plain markdown and the index rebuilds from them.
 
 ## Known issues
 
-- **Same-named files in two projects on one day.** A code note is named
-  `<date>_<file path>`, without the project, so if session B edits
-  `src/server.js` or creates `src/rate-limit.js` on demo day, its note
-  overwrites project A's. The project B prompts say "don't change any files".
 - **Headless runs** (`claude -p`, as in the rehearsal) run in untrusted
   folders: pass `--permission-mode acceptEdits` in project A and
   `--allowedTools "Skill(recall)"` in project B, or recall the agent starts on
@@ -281,3 +276,17 @@ Then the whole demo again in one go with the final kit, from `setup.sh --force`:
 
 Machine time from reset to the end of step 4: **3 min 6 s**, which leaves
 about six minutes for the talking points inside ten.
+
+Again after the review fixes (project in note names, memos of one run
+linked to each other, type and kind kept apart), headless, from `setup.sh`
+on port 5694:
+
+| Step | Started | Elapsed | Result |
+|------|---------|---------|--------|
+| Set-up, reset, injection off, warm-up | 08:21:15 | 19 s | 13 seed notes |
+| 1. Session A | 08:21:42 | 42 s | Limiter written; its smoke test denied (headless). Code captures took 20 s and 19 s: `2026-10-27_shortlinks_src_rate-limit.js`, `2026-10-27_shortlinks_src_server.js` |
+| 2. `/remember` | 08:23:06 | 62 s | 3 memos (decision, two todos), each linked under Same Session to both code notes and the other two memos, with no Related Notes repeating them; memo run 25 s |
+| 3. Session B, injection off | 08:24:22 | 34 s | `recall` skill, two searches, `get_note` × 4; correct answer citing the new decision memo, the new `src/server.js` note and both new todos |
+| 4. Session B, injection on | 08:25:06 | 34 s | Injected the shortlinks todo, the new decision memo and the new verify todo; no search, `get_note` on those; same correct, cited answer |
+
+Machine time from reset to the end of step 4: **4 min 25 s**, warm-up included.

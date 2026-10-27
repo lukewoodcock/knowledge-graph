@@ -21,8 +21,8 @@ Rate-limit `POST /links` per client before launch, answering `429 Too Many Reque
 `src/server.js`, in the `POST /links` handler, before the URL is stored.
 
 ## Same Session
-- [[2026-10-12_src_server.js]]
-- [[2026-10-12_src_codes.js]]
+- [[2026-10-12_shortlinks_src_server.js]]
+- [[2026-10-12_shortlinks_src_codes.js]]
 
 ## Related Notes
 - [[2026-10-12_Short_codes_are_the_base62_encoding_of_an_auto-increment_counter]]

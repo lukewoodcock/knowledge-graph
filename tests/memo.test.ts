@@ -48,6 +48,7 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
     };
   });
 
@@ -163,13 +164,13 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
   });
 
   /** Runs a code capture and returns the name of the code note it wrote. */
-  async function codeCapture(app: Express, filePath: string, session: string): Promise<string> {
+  async function codeCapture(app: Express, filePath: string, session: string, project = 'project-a'): Promise<string> {
     const run = await triggerAndWait(app, {
       file_path: filePath,
       language: 'typescript',
       description: `Work on ${filePath}`,
       session_id: session,
-      project: 'project-a',
+      project,
     });
     const code = run.body.notes.find((n: { agent: string }) => n.agent === 'documenter');
     return path.basename(code.note_path, '.md');
@@ -192,6 +193,26 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(content).not.toContain(`[[${other}]]`);
   });
 
+  test("a code-capture note's name holds its date, project and file path", async () => {
+    const name = await codeCapture(createApp(cfg), 'src/server.js', 'sess-1', 'shortlinks');
+
+    expect(name).toBe(`${today()}_shortlinks_src_server.js`);
+  });
+
+  test("two projects editing a same-named file on one day get separate notes, and the first session's memo keeps its link", async () => {
+    const app = createApp(cfg);
+    const fromA = await codeCapture(app, 'src/server.js', 'sess-1', 'project-a');
+    const memo = (await memoAndWait(app, MEMO)).body.memos[0];
+
+    const fromB = await codeCapture(app, 'src/server.js', 'sess-2', 'project-b');
+
+    expect(fromB).not.toBe(fromA);
+    const noteA = await request(app).get(`/webhook/knowledge-graph/notes/${encodeURIComponent(fromA)}`);
+    expect(noteA.body.frontmatter).toMatchObject({ project: 'project-a', session: 'sess-1' });
+    const related = await request(app).get(`/webhook/knowledge-graph/notes/${encodeURIComponent(memo.name)}/related`);
+    expect(related.body.outgoing.map((n: { name: string }) => n.name)).toEqual([fromA]);
+  });
+
   test("a memo and its session's code note are related both ways in the graph", async () => {
     const app = createApp(cfg);
     const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
@@ -205,7 +226,31 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(fromMemo.body.outgoing.map((n: { name: string }) => n.name)).toEqual([cache]);
   });
 
-  test('memos do not link to other memos through the session rule', async () => {
+  test('memos saved in the same run link to each other, and to the code notes, under Same Session', async () => {
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    const todo = { ...MEMO, kind: 'todo', title: 'Add cache metrics', body: 'Count cache hits.' };
+    const otherSession = { ...MEMO, title: 'Elsewhere', session_id: 'sess-2' };
+
+    const run = await memoAndWait(app, [MEMO, todo, otherSession]);
+
+    const [decision, metrics, elsewhere] = run.body.memos;
+    expect(decision.links).toEqual([cache, metrics.name]);
+    expect(metrics.links).toEqual([cache, decision.name]);
+    expect(elsewhere.links).toEqual([]);
+    const content = await fs.readFile(decision.note_path, 'utf8');
+    expect(content).toContain(`## Same Session\n- [[${cache}]]\n- [[${metrics.name}]]`);
+  });
+
+  test('two memos with the same title in one run each link to the other by its own name', async () => {
+    const run = await memoAndWait(createApp(cfg), [MEMO, { ...MEMO, body: 'Another take.' }]);
+
+    const [a, b] = run.body.memos;
+    expect(a.links).toEqual([b.name]);
+    expect(b.links).toEqual([a.name]);
+  });
+
+  test('memos do not link to memos from earlier runs through the session rule', async () => {
     const app = createApp(cfg);
     const first = await memoAndWait(app, MEMO);
 
@@ -255,6 +300,32 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(content).toContain(`## Same Session\n- [[${cache}]]`);
   });
 
+  test('the Linker never repeats a link already under Same Session', async () => {
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    mockState.linkTargets = [memoPath(MEMO.title)];
+    mockState.links = [`[[${cache}]]`, '[[existing-note]]', `[[${cache}|the cache note]]`];
+
+    const run = await memoAndWait(app, MEMO);
+
+    const content = await fs.readFile(run.body.memos[0].note_path, 'utf8');
+    expect(content.slice(content.indexOf('## Related Notes'))).toBe('## Related Notes\n- [[existing-note]]\n');
+  });
+
+  test('when the Linker only suggests notes already under Same Session, it writes no Related Notes', async () => {
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
+    const app = createApp(cfg);
+    const cache = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    mockState.linkTargets = [memoPath(MEMO.title)];
+    mockState.links = [`[[${cache}]]`];
+
+    const run = await memoAndWait(app, MEMO);
+
+    expect(run.body.linker.links_written).toBe(0);
+    expect(await fs.readFile(run.body.memos[0].note_path, 'utf8')).not.toContain('## Related Notes');
+  });
+
   test("the Linker is told about the memo, its kind and title", async () => {
     await writeVaultNote('notes/existing-note.md', '# Existing\n');
     await memoAndWait(createApp(cfg), MEMO);
@@ -287,7 +358,7 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     return request(app).post('/webhook/knowledge-graph/search').send(body);
   }
 
-  test('memos are in the index, with their kind and project, as soon as the run finishes', async () => {
+  test('memos are in the index, with their type, kind and project, as soon as the run finishes', async () => {
     const app = createApp(cfg);
     const run = await memoAndWait(app, { ...MEMO, body: 'We chose a write-through cache.' });
 
@@ -295,6 +366,7 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
 
     expect(res.body.results[0]).toMatchObject({
       name: run.body.memos[0].name,
+      type: 'memo',
       kind: 'decision',
       project: 'project-a',
     });
@@ -328,22 +400,60 @@ describe('POST /webhook/knowledge-graph/memo (end-to-end)', () => {
     expect(res.body.results.every((r: { kind: string }) => r.kind === 'todo')).toBe(true);
   });
 
-  test('search without a kind still returns every kind', async () => {
+  test('search without filters returns every type of note; only memos have a kind', async () => {
     const app = createApp(cfg);
     await codeCapture(app, 'src/cache.ts', 'sess-1');
     await memoAndWait(app, { ...MEMO, kind: 'todo', title: 'Add cache metrics', body: 'Count cache hits.' });
 
     const res = await search(app, { query: 'cache', limit: 10 });
 
-    expect(new Set(res.body.results.map((r: { kind: string }) => r.kind))).toEqual(new Set(['todo', 'code']));
+    const typesAndKinds = res.body.results.map((r: { type: string; kind: string | null }) => [r.type, r.kind]);
+    expect(typesAndKinds).toEqual(expect.arrayContaining([['code', null], ['memo', 'todo']]));
+    expect(typesAndKinds).toHaveLength(2);
   });
 
-  test('a kind filter that is not a string is rejected with 400', async () => {
-    const res = await search(createApp(cfg), { query: 'cache', kind: 3 });
+  test('search filtered by type returns only notes of that type, and code is a type, not a kind', async () => {
+    const app = createApp(cfg);
+    const code = await codeCapture(app, 'src/cache.ts', 'sess-1');
+    await memoAndWait(app, { ...MEMO, body: 'Cache cache.' });
+
+    const byType = await search(app, { query: 'cache', type: 'code', limit: 10 });
+    const byKind = await search(app, { query: 'cache', kind: 'code', limit: 10 });
+
+    expect(byType.body.results.map((r: { name: string }) => r.name)).toEqual([code]);
+    expect(byKind.body.results).toEqual([]);
+  });
+
+  test("results carry a todo's status, and a status filter recalls only the open todos", async () => {
+    const app = createApp(cfg);
+    const run = await memoAndWait(app, [
+      { ...MEMO, kind: 'todo', title: 'Add cache metrics', body: 'Count cache hits.' },
+      { ...MEMO, kind: 'todo', title: 'Warm the cache', body: 'Warm the cache on start.' },
+      { ...MEMO, kind: 'decision', title: 'Cache writes', body: 'Cache writes through.' },
+    ]);
+    const [metrics, warm] = run.body.memos;
+    // Closed by hand in Obsidian; the next start re-indexes the edited note.
+    const content = await fs.readFile(warm.note_path, 'utf8');
+    await fs.writeFile(warm.note_path, content.replace('status: "open"', 'status: "done"'), 'utf8');
+    const restarted = createApp(cfg);
+
+    const todos = await search(restarted, { query: 'cache', kind: 'todo', limit: 10 });
+    const open = await search(restarted, { query: 'cache', kind: 'todo', status: 'open', limit: 10 });
+
+    const statuses = Object.fromEntries(todos.body.results.map((r: { name: string; status: string }) => [r.name, r.status]));
+    expect(statuses).toEqual({ [metrics.name]: 'open', [warm.name]: 'done' });
+    expect(open.body.results.map((r: { name: string }) => r.name)).toEqual([metrics.name]);
+  });
+
+  test.each(['kind', 'type', 'status'])('a %s filter that is not a string is rejected with 400', async field => {
+    const res = await search(createApp(cfg), { query: 'cache', [field]: 3 });
     expect(res.status).toBe(400);
+    expect(res.body.error).toContain(field);
   });
 
   test('a memo sent while a code capture is running waits its turn in the same queue', async () => {
+    // A note neither links to yet, so both runs ask the Linker.
+    await writeVaultNote('notes/existing-note.md', '# Existing\n');
     const app = createApp(cfg);
     mockState.delayMs = 30;
     const code = await request(app)

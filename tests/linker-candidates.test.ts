@@ -39,6 +39,7 @@ describe("the Linker's link candidates (end-to-end)", () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
     };
   });
 

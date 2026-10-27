@@ -60,6 +60,7 @@ describe('remember command', () => {
       ollamaThink: false,
       embedModel: 'mock-embed',
       researcher: false,
+      noteMaxChars: 20_000,
     };
     service = await startServer(cfg);
     return `http://127.0.0.1:${(service.address() as { port: number }).port}`;
@@ -116,7 +117,7 @@ describe('remember command', () => {
     const { code, output } = await run(['--session', 'sess-1', '--project-dir', projectDir], JSON.stringify(DECISION), url);
 
     expect(code).toBe(0);
-    expect(output).toMatch(/Use_write-through_caching \(decision\)\n\s+links: \[\[\d{4}-\d{2}-\d{2}_src_cache\.ts\]\]/);
+    expect(output).toMatch(/Use_write-through_caching \(decision\)\n\s+links: \[\[\d{4}-\d{2}-\d{2}_demo-project_src_cache\.ts\]\]/);
   });
 
   test('says a memo has no links when it has none', async () => {

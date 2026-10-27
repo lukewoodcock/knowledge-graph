@@ -6,18 +6,6 @@ export function today(): string {
   return new Date().toISOString().split('T')[0];
 }
 
-/**
- * Sanitises arbitrary text into a filesystem-safe title: non-alphanumeric
- * characters (except _ - .) become underscores, leading/trailing underscores
- * are stripped, and the result is truncated to maxLen characters.
- */
-export function safeTitle(input: string, maxLen = 60): string {
-  return input
-    .replace(/[^a-zA-Z0-9_\-.]/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .substring(0, maxLen);
-}
-
 export interface Frontmatter {
   title: string;
   date: string;
@@ -42,23 +30,28 @@ export function renderFrontmatter(fm: Frontmatter): string {
 }
 
 /**
- * Adds `key: "value"` lines to a note's YAML frontmatter, skipping undefined
- * values. A note without frontmatter gets a block holding just these fields.
+ * Sets `key: "value"` lines in a note's YAML frontmatter, skipping undefined
+ * values. A key the frontmatter already has is replaced, so the note never
+ * holds it twice. A note without frontmatter gets a block holding just these
+ * fields.
  */
-export function addFrontmatterFields(
+export function setFrontmatterFields(
   content: string,
   fields: Record<string, string | undefined>,
 ): string {
-  const lines = Object.entries(fields)
-    .filter((e): e is [string, string] => e[1] !== undefined)
-    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
+  const set = Object.entries(fields).filter((e): e is [string, string] => e[1] !== undefined);
+  const lines = set.map(([k, v]) => `${k}: ${JSON.stringify(v)}`);
   if (lines.length === 0) return content;
 
   // Everything up to (not including) the closing "---" line.
   const fm = /^---\r?\n[\s\S]*?\r?\n(?=---[ \t]*(\r?\n|$))/.exec(content);
   if (!fm) return ['---', ...lines, '---', '', content].join('\n');
-  const end = fm[0].length;
-  return content.slice(0, end) + lines.join('\n') + '\n' + content.slice(end);
+  const keys = new Set(set.map(([k]) => k));
+  const kept = fm[0]
+    .split(/\r?\n/)
+    .filter(line => !keys.has(/^([A-Za-z_][\w-]*):/.exec(line)?.[1] ?? ''))
+    .join('\n');
+  return kept + lines.join('\n') + '\n' + content.slice(fm[0].length);
 }
 
 /** A note split into its frontmatter fields and its body. */
@@ -99,9 +92,16 @@ export function parseNote(content: string): ParsedNote {
   return { frontmatter, body: content.slice(m[0].length) };
 }
 
-/** The frontmatter fields a note written from a capture carries. */
-export function captureFields(ctx: { project?: string; session?: string }): Record<string, string | undefined> {
-  return { project: ctx.project, session: ctx.session };
+/**
+ * The frontmatter fields the service sets on a note an agent wrote from a
+ * code capture: its type, whatever the model wrote, and the capture's
+ * project and session.
+ */
+export function captureFields(
+  type: 'code' | 'research',
+  ctx: { project?: string; session?: string },
+): Record<string, string | undefined> {
+  return { type, project: ctx.project, session: ctx.session };
 }
 
 /** Writes a note, creating parent directories as needed. */

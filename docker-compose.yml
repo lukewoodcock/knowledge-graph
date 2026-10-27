@@ -19,7 +19,8 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     ports:
-      - "11434:11434"
+      # Loopback only, like the service: Ollama has no authentication either.
+      - "127.0.0.1:11434:11434"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s
@@ -42,8 +43,8 @@ services:
       - "127.0.0.1:${PORT:-5678}:5678"
     environment:
       # Inside the container the service must listen on every interface, or
-      # the published port can't reach it. The loopback-only publish above is
-      # what keeps it private.
+      # the published port can't reach it (the image's default too). The
+      # loopback-only publish above is what keeps it private.
       HOST: "0.0.0.0"
       PORT: "5678"
       VAULT_PATH: /vault
@@ -52,6 +53,7 @@ services:
       OLLAMA_THINK: ${OLLAMA_THINK:-false}
       OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-bge-large}
       RESEARCHER_ENABLED: ${RESEARCHER_ENABLED:-false}
+      NOTE_MAX_CHARS: ${NOTE_MAX_CHARS:-20000}
     volumes:
       # Mount your Obsidian vault here. Set VAULT_HOST_PATH in .env.
       - ${VAULT_HOST_PATH:-./vault}:/vault

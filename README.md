@@ -43,7 +43,19 @@ docker exec -it ollama ollama pull qwen3.5:9b
 docker exec -it ollama ollama pull bge-large   # embeddings for search
 ```
 
-Podman on macOS works identically: `podman compose up -d --build`.
+Podman on macOS works identically: `podman compose up -d --build`. Compose
+publishes both the service (5678) and Ollama (11434) on the host's loopback
+only.
+
+Without compose, publish the image's port on loopback too: the image listens
+on every interface inside the container (`HOST=0.0.0.0`), so the `-p` address
+is what keeps it private.
+
+```bash
+docker build -t swarm-kg .
+docker run -d -p 127.0.0.1:5678:5678 -v /path/to/vault:/vault \
+  -e OLLAMA_URL=http://host.docker.internal:11434 swarm-kg
+```
 
 ### Trigger from the IDE
 
@@ -63,6 +75,11 @@ and `changed_code` are optional. So are `session_id` (the Claude Code session)
 and `project` (the codebase, named after its git repository): when sent, they
 are recorded as `session` and `project` in the frontmatter of every note the
 run writes, and when left out those fields are simply absent.
+
+The Documenter's note is `code/<date>_<project>_<file path>.md` (for example
+`code/2026-06-10_project-a_src_auth_jwt.py.md`), so two projects changing a
+file of the same name on the same day get a note each. Without a `project`
+the name is just `<date>_<file path>`, as in the reply below.
 
 The service replies `202 Accepted` straight away and the agents run in the
 background:
@@ -109,7 +126,9 @@ Documenter's note and `notes` has one entry; the run is still `"complete"`.
 
 If one agent fails, the run degrades gracefully: `status` becomes `"partial"`,
 the surviving note is still written and linked, and an `errors` array explains
-what failed.
+what failed. The same goes for the Linker and indexing, as in a memo run: if
+either fails, the notes are still written and listed, and the run is
+`"partial"`, not an error.
 
 ### Send memos
 
@@ -142,9 +161,11 @@ capture, and the run joins the same queue.
 The run writes each memo to `vault/memos/<date>_<title>.md` with `kind`,
 `project` and `session` (and `files`) in its frontmatter; todos also get
 `status: open`. The service links each memo, under `## Same Session`, to every
-note the code captures of its session wrote (never to notes from other
-sessions, and not to other memos). The Linker then adds its similarity links
-under `## Related Notes`, and the memos are indexed. The finished run lists
+note the code captures of its session wrote and to the other memos of its
+session sent in the same request (never to notes from other sessions, nor to
+memos from earlier requests). The Linker then adds its similarity links under
+`## Related Notes`, never repeating a note the memo already links to, and the
+memos are indexed. The finished run lists
 each memo with all its links, each named once:
 
 ```json
@@ -157,7 +178,7 @@ each memo with all its links, each named once:
       "name": "2026-06-10_Use_write-through_caching",
       "note_path": "/vault/memos/2026-06-10_Use_write-through_caching.md",
       "kind": "decision",
-      "links": ["2026-06-10_src_cache.ts", "2026-06-02_redis-notes"]
+      "links": ["2026-06-10_project-a_src_cache.ts", "2026-06-02_redis-notes"]
     }
   ],
   "linker": { "status": "success", "links_written": 1 }
@@ -194,9 +215,9 @@ node dist/remember.js --session <session id> --project-dir <project root> < memo
 ```
 Saved 2 memo(s) to the graph for project url-shortener, session 2d27…:
 - 2026-10-26_URL_shortener_short_codes_are_the_base62_encoding_of_an_auto (decision)
-  links: [[2026-10-26_src_shorten.js]]
+  links: [[2026-10-26_url-shortener_src_shorten.js]]
 - 2026-10-26_Add_rate_limiting_to_the_URL_shortener_create-link_endpoint_ (todo)
-  links: [[2026-10-26_src_shorten.js]]
+  links: [[2026-10-26_url-shortener_src_shorten.js]]
 ```
 
 - **Input**: on stdin, one memo, a JSON array of them, or `{"memos": [...]}`,
@@ -233,17 +254,19 @@ server on localhost by default; on macOS allow it with
 
 There is no authentication, so the service listens on the loopback interface
 (`127.0.0.1`) by default: only your own machine can send captures or read
-notes. `HOST` changes the bind address. `docker compose` publishes the port
-on the host's loopback only (`127.0.0.1:5678`), and sets `HOST=0.0.0.0` inside
-the container so the published port can reach the service.
+notes. `HOST` changes the bind address. The Docker image sets `HOST=0.0.0.0`
+inside the container so a published port can reach the service, so publish it
+on the host's loopback only: `docker compose` does (`127.0.0.1:5678`, and
+`127.0.0.1:11434` for Ollama), and with `docker run` use
+`-p 127.0.0.1:5678:5678`, never a bare `-p 5678:5678`.
 
 ### Search the graph
 
 Every note is embedded with a local Ollama embedding model (`bge-large` by
 default, set with `OLLAMA_EMBED_MODEL`) as soon as a run writes it, so a run's
 notes are searchable by the time the run finishes. Each `##` section is
-embedded on its own, with the note's title, kind, project and a one-line
-summary in front of it, so a section like "Key Points" still matches questions
+embedded on its own, with the note's title, type, kind (for a memo), project
+and a one-line summary in front of it, so a section like "Key Points" still matches questions
 about the note's topic. A section too long for the model (over about 1500
 characters) is split at paragraph breaks into chunks that keep its heading.
 
@@ -258,9 +281,11 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
   "query": "how did I refresh JWTs?",
   "results": [
     {
-      "name": "2026-06-10_src_auth_jwt.py",
-      "path": "code/2026-06-10_src_auth_jwt.py.md",
-      "kind": "code",
+      "name": "2026-06-10_project-a_src_auth_jwt.py",
+      "path": "code/2026-06-10_project-a_src_auth_jwt.py.md",
+      "type": "code",
+      "kind": null,
+      "status": null,
       "project": "project-a",
       "snippet": "## Summary\nImplements JWT refresh with a sliding expiry window…",
       "score": 0.81
@@ -271,14 +296,23 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
 
 `query` is required; `limit` is optional (5 by default, at most 50). A note's
 score is the cosine similarity of its best-matching section, which is also its
-snippet. `kind` is a memo's kind, else the note's `type`. Research notes and
-session logs are never returned. An optional `kind` in the request returns only
-notes of that kind, e.g. `{"query": "what's left to do?", "kind": "todo"}`
-recalls todos (open ones carry `status: open` until you change it in Obsidian).
+snippet. `type` is the note's type from its frontmatter (`code`, `memo`, or
+whatever another source writes), `kind` a memo's kind (`learning`, `decision`,
+`todo`, `snippet`, `conversation`; `null` for every other note) and `status`
+the note's status (a todo's is `open` until you change it in Obsidian; `null`
+when the note has none). Research notes (`type: research`, wherever they live)
+and session logs are never returned.
+
+Optional `type`, `kind` and `status` in the request narrow the results to
+notes with that value, so `{"query": "what's left to do?", "kind": "todo",
+"status": "open"}` recalls open todos. A todo closed in Obsidian drops out of
+that search once the index picks up the edit (on the next start, or
+`npm run reindex`).
 
 The Linker uses the same search to pick link candidates: each new note's title
-and body are the query, and the ten best hits (never the note itself) are the
-only notes the model may link it to. Links to anything else are dropped, and
+and body are the query, and the ten best hits (never the note itself, nor a
+note it already links to, such as a memo's Same Session notes) are the only
+notes the model may link it to. Links to anything else are dropped, and
 with nothing to link to the model isn't asked at all. The new note doesn't
 need to be indexed for this, so a run indexes its notes once, after the
 Linker. Since research notes are never search hits, they aren't link
@@ -318,9 +352,13 @@ curl -s http://localhost:5678/webhook/knowledge-graph/notes/cache-decision | jq 
 }
 ```
 
-`content` is the note's markdown after its frontmatter. The related endpoint
+`content` is the note's markdown after its frontmatter, up to
+`NOTE_MAX_CHARS` characters (20,000 by default), so a huge note can't flood an
+agent's context. A longer note is cut there and ends with a marker,
+`… [truncated: showing 20000 of 31250 characters]`, and the reply also holds
+`"truncated": true`. The related endpoint
 lists the notes a note links to (`outgoing`) and the notes that link to it
-(`incoming`), each as `{name, path, title, kind, project}`. Session logs,
+(`incoming`), each as `{name, path, title, type, kind, project}`. Session logs,
 links to notes that don't exist, and self-links are left out.
 
 ```bash
@@ -340,7 +378,7 @@ has no network listener of its own; each tool calls the service's HTTP API:
 
 | Tool | Calls |
 |------|-------|
-| `search_notes(query, limit = 5, kind?)` | `POST /webhook/knowledge-graph/search` |
+| `search_notes(query, limit = 5, type?, kind?, status?)` | `POST /webhook/knowledge-graph/search` |
 | `get_note(name)` | `GET /webhook/knowledge-graph/notes/:name` |
 | `related_notes(name)` | `GET /webhook/knowledge-graph/notes/:name/related` |
 
@@ -521,7 +559,7 @@ demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"    # before each run
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 184 tests, a couple of seconds, no Docker needed
+npm test             # vitest — 203 tests, a few seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -532,12 +570,15 @@ src/
 ├── index.ts            # entrypoint
 ├── server.ts           # Express app: webhook + orchestration (replaces n8n Orchestrator)
 ├── config.ts           # env var loading
+├── env.ts              # settings helpers shared with the clients: service URL, whole numbers
 ├── ollama.ts           # /api/chat and /api/embed clients + response parsing
 ├── embedding-index.ts  # notes embedded by section, the index file, search
-├── memos.ts            # memo validation, memo notes and their same-session links
+├── requests.ts         # pure validation of memo and search request bodies
+├── memos.ts            # memo notes and their same-session links
 ├── reindex.ts          # npm run reindex: asks the service to rebuild the index
 ├── remember.ts         # dist/remember.js: what /remember runs to send memos and report them
-├── vault.ts            # safeTitle, frontmatter parsing and writing, file helpers
+├── vault.ts            # frontmatter parsing and writing, file helpers
+├── vault-format.ts     # what writers and readers agree on: folders, note names, link sections, wikilinks
 ├── graph.ts            # one note by name, and the notes linked to and from it
 ├── agents/
 │   ├── documenter.ts
@@ -573,7 +614,8 @@ runs typecheck, tests, and a production build on every PR.
 | `OLLAMA_EMBED_MODEL` | `bge-large` | Ollama embedding model for search. Changing it re-embeds every note |
 | `OLLAMA_THINK` | `false` | Let thinking models reason first. ~20x slower on a 9B model |
 | `RESEARCHER_ENABLED` | `false` | `true` also writes a research note for every code capture |
-| `HOST` | `127.0.0.1` | Address the service listens on (compose sets `0.0.0.0` inside the container and publishes on loopback) |
+| `NOTE_MAX_CHARS` | `20000` | Most characters of a note's text the note endpoint (and `get_note`) returns; longer notes are cut with a marker |
+| `HOST` | `127.0.0.1` | Address the service listens on (the Docker image sets `0.0.0.0` inside the container; publish it on loopback) |
 | `PORT` | `5678` | Webhook service port |
 
 ## Changes from the n8n version

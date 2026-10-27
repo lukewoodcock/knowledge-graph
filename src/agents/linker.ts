@@ -3,8 +3,9 @@ import * as path from 'path';
 import { Config } from '../config';
 import { chat } from '../ollama';
 import { parseNote } from '../vault';
+import { linkTargets, noteName, RELATED_LINKS_HEADING, vaultRelative, wikilinkTarget } from '../vault-format';
 import { CHUNK_CHARS, EmbeddingIndex, SearchHit } from '../embedding-index';
-import { LinkerResult, NoteResult } from '../types';
+import { LinkerResult, WrittenNote } from '../types';
 
 const SYSTEM_PROMPT =
   'You are a knowledge-graph linking assistant. Your job is to find meaningful ' +
@@ -51,14 +52,9 @@ export function parseLinkMap(raw: string): LinkMapEntry[] {
  */
 export function appendLinks(content: string, links: string[]): string | null {
   if (links.length === 0) return null;
-  if (content.includes('## Related Notes')) return null;
-  const section = `\n\n## Related Notes\n${links.map(l => `- ${l}`).join('\n')}\n`;
+  if (content.includes(`## ${RELATED_LINKS_HEADING}`)) return null;
+  const section = `\n\n## ${RELATED_LINKS_HEADING}\n${links.map(l => `- ${l}`).join('\n')}\n`;
   return content + section;
-}
-
-/** "[[name|alias]]" or "[[name#heading]]" -> "name". */
-function linkTarget(link: string): string {
-  return link.replace(/^\[\[/, '').replace(/\]\]$/, '').split(/[|#]/)[0].trim();
 }
 
 /**
@@ -71,7 +67,7 @@ export function filterLinks(links: string[], candidateNames: string[]): string[]
   const seen = new Set<string>();
   return links.filter(l => {
     if (typeof l !== 'string') return false;
-    const target = linkTarget(l);
+    const target = wikilinkTarget(l);
     if (!candidateNames.includes(target) || seen.has(target)) return false;
     seen.add(target);
     return true;
@@ -81,16 +77,13 @@ export function filterLinks(links: string[], candidateNames: string[]): string[]
 /** Builds the "- [[basename]] (relative/path.md)" index for the prompt. */
 export function buildNoteIndex(relativePaths: string[]): string {
   return relativePaths
-    .map(f => {
-      const base = f.replace(/^.*\//, '').replace(/\.md$/, '');
-      return `- [[${base}]] (${f})`;
-    })
+    .map(f => `- [[${noteName(f)}]] (${f})`)
     .join('\n');
 }
 
 /** A new note with the existing notes it may link to. */
-interface LinkJob {
-  note: NoteResult;
+interface NoteToLink {
+  note: WrittenNote;
   content: string;
   candidates: SearchHit[];
 }
@@ -101,15 +94,15 @@ function searchText(content: string, fallbackTitle: string): string {
   return `${frontmatter.title || fallbackTitle}\n\n${body.trim()}`.substring(0, CHUNK_CHARS);
 }
 
-function userPrompt(jobs: LinkJob[], language: string, description: string): string {
-  const notes = jobs
-    .map(j =>
+function userPrompt(toLink: NoteToLink[], language: string, description: string): string {
+  const notes = toLink
+    .map(n =>
       [
-        `### New note: ${j.note.notePath}`,
-        `Title: ${j.note.title}`,
-        `Type: ${j.note.agent}`,
+        `### New note: ${n.note.notePath}`,
+        `Title: ${n.note.title}`,
+        `Type: ${n.note.type}`,
         'Candidates (most similar first):',
-        buildNoteIndex(j.candidates.map(c => c.path)),
+        buildNoteIndex(n.candidates.map(c => c.path)),
       ].join('\n'),
     )
     .join('\n\n');
@@ -132,6 +125,16 @@ Task: For EACH new note, choose up to 5 of ITS OWN candidates that are semantica
 If no meaningful links exist, return an empty links_to_add array for that note. Output ONLY the JSON array.`;
 }
 
+export interface LinkerInput {
+  /** The notes the run just wrote. */
+  notes: WrittenNote[];
+  /** The work the notes came from, for the prompt: the capture's language and description. */
+  language: string;
+  description: string;
+  cfg: Config;
+  index: Pick<EmbeddingIndex, 'search'>;
+}
+
 /**
  * Links the newly created notes into the graph. Each new note is offered the
  * LINK_CANDIDATES existing notes most similar to it, found by searching the
@@ -142,52 +145,48 @@ If no meaningful links exist, return an empty links_to_add array for that note. 
  * as the query. That's why a run indexes its notes after the Linker, once,
  * with the links in place. Search never returns session logs or research
  * notes, and a note is never its own candidate, even when an earlier version
- * of it at the same path is already indexed.
+ * of it at the same path is already indexed. Nor is a note it already links
+ * to (a memo's Same Session links, say), so the Linker never repeats a link.
  */
-export async function runLinker(
-  newNotes: NoteResult[],
-  language: string,
-  description: string,
-  cfg: Config,
-  index: Pick<EmbeddingIndex, 'search'>,
-): Promise<LinkerResult> {
-  const jobs: LinkJob[] = [];
-  for (const note of newNotes) {
+export async function runLinker({ notes, language, description, cfg, index }: LinkerInput): Promise<LinkerResult> {
+  const toLink: NoteToLink[] = [];
+  for (const note of notes) {
     let content: string;
     try {
       content = await fs.readFile(path.resolve(note.notePath), 'utf8');
     } catch {
       continue;
     }
-    const self = path.relative(cfg.vaultPath, path.resolve(note.notePath)).split(path.sep).join('/');
-    const hits = await index.search(searchText(content, note.title), { limit: LINK_CANDIDATES + 1 });
-    const candidates = hits.filter(h => h.path !== self).slice(0, LINK_CANDIDATES);
-    if (candidates.length > 0) jobs.push({ note, content, candidates });
+    const self = vaultRelative(cfg.vaultPath, note.notePath);
+    const linked = new Set(linkTargets(content));
+    const hits = await index.search(searchText(content, note.title), { limit: LINK_CANDIDATES + 1 + linked.size });
+    const candidates = hits.filter(h => h.path !== self && !linked.has(h.name)).slice(0, LINK_CANDIDATES);
+    if (candidates.length > 0) toLink.push({ note, content, candidates });
   }
 
   // Nothing to link to (an empty or tiny vault): no need to ask the LLM.
-  if (jobs.length === 0) {
+  if (toLink.length === 0) {
     return { agent: 'linker', status: 'success', linksWritten: 0 };
   }
 
   const raw = await chat(cfg.ollamaUrl, cfg.ollamaModel, [
     { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: userPrompt(jobs, language, description) },
+    { role: 'user', content: userPrompt(toLink, language, description) },
   ], cfg.ollamaThink);
 
   let linksWritten = 0;
   for (const entry of parseLinkMap(raw)) {
     // Only touch the notes we just created, never arbitrary paths the LLM
     // invents.
-    const job = jobs.find(j => j.note.notePath === entry.new_note_path);
-    if (!job) continue;
+    const target = toLink.find(n => n.note.notePath === entry.new_note_path);
+    if (!target) continue;
 
-    const links = filterLinks(entry.links_to_add, job.candidates.map(c => c.name));
-    const updated = appendLinks(job.content, links);
+    const links = filterLinks(entry.links_to_add, target.candidates.map(c => c.name));
+    const updated = appendLinks(target.content, links);
     if (updated === null) continue;
 
-    await fs.writeFile(path.resolve(job.note.notePath), updated, 'utf8');
-    job.content = updated;
+    await fs.writeFile(path.resolve(target.note.notePath), updated, 'utf8');
+    target.content = updated;
     linksWritten++;
   }
 

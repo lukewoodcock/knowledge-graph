@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { listMarkdownFiles, parseNote } from './vault';
+import { isNote, isSessionLog, linkTargets, noteName, NoteRef, noteRefFields } from './vault-format';
 
 /**
  * Reading the graph by name: one note in full, and the notes linked to and
@@ -8,24 +9,27 @@ import { listMarkdownFiles, parseNote } from './vault';
  * Reads go straight to the vault, which stays the only source of truth.
  */
 
-/** One note in full. */
+/** One note, in full up to a cap. */
 export interface NoteView {
   name: string;
   /** Path relative to the vault root, e.g. "memos/cache-decision.md". */
   path: string;
   /** Top-level frontmatter fields, as parseNote reads them. */
   frontmatter: Record<string, string>;
-  /** The note's markdown after its frontmatter. */
+  /** The note's markdown after its frontmatter, cut short (with a marker saying so) past the cap. */
   content: string;
+  /** Present, and true, when `content` was cut short. */
+  truncated?: true;
 }
 
-/** Dot folders (.obsidian, .trash, the index) don't hold notes. */
-function isNote(relPath: string): boolean {
-  return !relPath.split('/').some(seg => seg.startsWith('.'));
-}
-
-function noteName(relPath: string): string {
-  return path.basename(relPath, '.md');
+/**
+ * The note's text up to `maxChars` characters; past that, its first
+ * `maxChars` characters and a marker saying how much was left out.
+ */
+export function capContent(content: string, maxChars: number): { content: string; truncated?: true } {
+  if (content.length <= maxChars) return { content };
+  const marker = `\n\n… [truncated: showing ${maxChars} of ${content.length} characters]`;
+  return { content: content.slice(0, maxChars).trimEnd() + marker, truncated: true };
 }
 
 async function notePaths(vaultPath: string): Promise<string[]> {
@@ -36,22 +40,18 @@ async function notePaths(vaultPath: string): Promise<string[]> {
  * The note with this name, or null when there is none. Names are matched
  * against the vault's own files, so a name can never reach outside it.
  * Two notes sharing a name in different folders: the first path wins.
+ * Its text is cut at `maxChars` characters (see capContent).
  */
-export async function readNote(vaultPath: string, name: string): Promise<NoteView | null> {
+export async function readNote(vaultPath: string, name: string, maxChars: number): Promise<NoteView | null> {
   const relPath = (await notePaths(vaultPath)).find(p => noteName(p) === name);
   if (!relPath) return null;
   const { frontmatter, body } = parseNote(await fs.readFile(path.join(vaultPath, relPath), 'utf8'));
-  return { name, path: relPath, frontmatter, content: body.replace(/^(\r?\n)+/, '') };
+  return { name, path: relPath, frontmatter, ...capContent(body.replace(/^(\r?\n)+/, ''), maxChars) };
 }
 
 /** A linked note, described enough to decide whether to open it. */
-export interface LinkedNote {
-  name: string;
-  path: string;
+export interface LinkedNote extends NoteRef {
   title: string;
-  /** The memo's kind, else the note's type (code, research...), else null. */
-  kind: string | null;
-  project: string | null;
 }
 
 /** The notes one note links to (outgoing) and the notes linking to it (incoming). */
@@ -59,19 +59,6 @@ export interface RelatedNotes {
   name: string;
   outgoing: LinkedNote[];
   incoming: LinkedNote[];
-}
-
-/** Session logs record every capture; they're never a link target or source. */
-function isSessionLog(relPath: string): boolean {
-  return relPath.startsWith('logs/');
-}
-
-/** The note names a note's `[[wikilinks]]` point at, in order, without repeats. */
-function linkTargets(content: string): string[] {
-  const names = [...content.matchAll(/\[\[([^\]]+)\]\]/g)]
-    .map(m => m[1].split(/[|#]/)[0].trim())
-    .filter(n => n !== '');
-  return [...new Set(names)];
 }
 
 /**
@@ -92,8 +79,7 @@ export async function relatedNotes(vaultPath: string, name: string): Promise<Rel
         name: n,
         path: relPath,
         title: frontmatter.title || n,
-        kind: frontmatter.kind || frontmatter.type || null,
-        project: frontmatter.project || null,
+        ...noteRefFields(frontmatter),
       },
       links: linkTargets(content),
     });

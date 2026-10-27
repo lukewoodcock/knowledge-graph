@@ -24,8 +24,8 @@ Each new link takes the next value of a counter, and its short code is that numb
 Codes are sequential and guessable, so anyone can enumerate every link. Rate limiting the create endpoint is the first defence; see the todo.
 
 ## Same Session
-- [[2026-10-12_src_codes.js]]
-- [[2026-10-12_src_server.js]]
+- [[2026-10-12_shortlinks_src_codes.js]]
+- [[2026-10-12_shortlinks_src_server.js]]
 
 ## Related Notes
 - [[2026-10-12_Add_rate_limiting_to_the_shortlinks_create-link_endpoint_before_launch]]

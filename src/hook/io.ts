@@ -1,5 +1,7 @@
-// Side effects for the Stop hook: stdin, git, HTTP. Every function here
-// resolves rather than throws, so a failure can never reach Claude.
+// Side effects shared by the hooks and /remember: reading stdin, asking git
+// for diffs and the project's root and name, and posting code captures.
+// Every function here resolves rather than throws, so a failure can never
+// reach Claude.
 import { execFile } from 'child_process';
 import * as path from 'path';
 import { WebhookPayload } from './payload';

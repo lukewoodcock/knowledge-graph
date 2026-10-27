@@ -1,8 +1,8 @@
-import * as path from 'path';
 import { Config } from '../config';
 import { chat } from '../ollama';
-import { addFrontmatterFields, captureFields, safeTitle, writeNote } from '../vault';
-import { SwarmContext, NoteResult } from '../types';
+import { captureFields, setFrontmatterFields, writeNote } from '../vault';
+import { notePath as notePathIn, researchNoteName, safeTitle } from '../vault-format';
+import { CodeCapture, WrittenNote } from '../types';
 
 const SYSTEM_PROMPT =
   'You are a research assistant for software developers. Given a development context, ' +
@@ -10,7 +10,7 @@ const SYSTEM_PROMPT =
   'relevant libraries, and useful patterns. You have broad knowledge up to your ' +
   'training cut-off. Respond ONLY with the markdown document.';
 
-function userPrompt(ctx: SwarmContext): string {
+function userPrompt(ctx: CodeCapture): string {
   return `Produce a research note for the following development context.
 
 File: ${ctx.filePath}
@@ -50,15 +50,16 @@ Then provide:
  * Researches the current working context and writes a best-practices note
  * to vault/research/.
  */
-export async function runResearcher(ctx: SwarmContext, cfg: Config): Promise<NoteResult> {
+export async function runResearcher(ctx: CodeCapture, cfg: Config): Promise<WrittenNote> {
   const content = await chat(cfg.ollamaUrl, cfg.ollamaModel, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt(ctx) },
   ], cfg.ollamaThink);
 
-  const title = safeTitle(ctx.description || ctx.filePath || 'unknown');
-  const notePath = path.join(cfg.vaultPath, 'research', `${ctx.today}_research_${title}.md`);
-  await writeNote(notePath, addFrontmatterFields(content, captureFields(ctx)));
+  const topic = ctx.description || ctx.filePath;
+  const title = safeTitle(topic || 'unknown');
+  const notePath = notePathIn(cfg.vaultPath, 'research', researchNoteName(ctx.today, ctx.project, topic));
+  await writeNote(notePath, setFrontmatterFields(content, captureFields('research', ctx)));
 
-  return { agent: 'researcher', status: 'success', notePath, title };
+  return { type: 'research', notePath, title };
 }
