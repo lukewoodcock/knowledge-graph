@@ -375,7 +375,9 @@ The [`recall` skill](examples/skills/recall/SKILL.md) tells the agent when
 the graph is worth checking (past work, "how did I...", earlier decisions,
 saved snippets, open todos) and how to use the three tools: search, open the
 best hits, follow links when useful, answer, and cite every note used as a
-`[[wikilink]]` with its project, ending with a **Notes used** list. The agent
+`[[wikilink]]` with its project, ending with a **Notes used** list. With
+context injection on, it starts from the injected notes instead of searching
+again. The agent
 can load it on its own when a request leans on past work, and
 `/recall <question>` makes it answer that question from the graph.
 
@@ -497,6 +499,20 @@ on, and its settings. Try it by hand with the service running:
 ```bash
 echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed one at a time?"}' \
   | SWARM_KG_DEBUG=1 node dist/hook/prompt.js
+```
+
+## Demo
+
+[`demo/`](demo/) holds everything for the live demo: a seed vault, a set-up
+script that creates two throwaway projects wired with the config above, a
+reset script, a context-injection toggle, and
+[`demo/SCRIPT.md`](demo/SCRIPT.md) with every step, prompt, timing and
+fallback.
+
+```bash
+demo/setup.sh ~/swarm-kg-demo && source ~/swarm-kg-demo/demo.env
+demo/service.sh "$DEMO_VAULT"                                # in its own terminal
+demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"    # before each run
 ```
 
 ## Development

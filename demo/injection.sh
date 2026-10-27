@@ -5,10 +5,10 @@
 #
 #   demo/injection.sh <project-dir> on|off [min-score]
 #
-# min-score sets SWARM_KG_MIN_SCORE in the hook's command; the demo uses
+# min-score sets SWARM_KG_MIN_SCORE in the hook's command: 0.65 unless given,
 # the value measured against the seed vault (see demo/SCRIPT.md).
 set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ $# -ge 2 ] || { echo "usage: demo/injection.sh <project-dir> on|off [min-score]" >&2; exit 1; }
-node "$DEMO/wire.mjs" injection "$@"
+node "$DEMO/wire.mjs" injection "$1" "$2" "${3:-0.65}"
 echo "context injection $2 in $1"
