@@ -169,7 +169,7 @@ describe('buildPayloads', () => {
   const cfg = loadHookConfig({});
 
   test('one payload per changed file, relative paths, shared description', () => {
-    const payloads = buildPayloads(turn, { cwd: '/demo/app', cfg });
+    const payloads = buildPayloads(turn, { projectDir: '/demo/app', cfg });
     expect(payloads.map(p => [p.file_path, p.language])).toEqual([
       ['src/auth/jwt.ts', 'typescript'],
       ['tests/test_jwt.py', 'python'],
@@ -180,7 +180,7 @@ describe('buildPayloads', () => {
 
   test('prefers the git diff, falling back to tool input', () => {
     const diffs = new Map([['/demo/app/src/auth/jwt.ts', 'diff --git a/src/auth/jwt.ts ...']]);
-    const [jwt, test_] = buildPayloads(turn, { cwd: '/demo/app', diffs, cfg });
+    const [jwt, test_] = buildPayloads(turn, { projectDir: '/demo/app', diffs, cfg });
     expect(jwt.changed_code).toBe('diff --git a/src/auth/jwt.ts ...');
     expect(test_.changed_code).toContain('def test_refresh');
   });
@@ -190,29 +190,30 @@ describe('buildPayloads', () => {
       prompt: 'p'.repeat(5000),
       edits: Array.from({ length: 8 }, (_, i) => ({ tool: 'Write' as const, filePath: `/w/f${i}.ts`, content: 'x'.repeat(10_000) })),
     };
-    const payloads = buildPayloads(big, { cwd: '/w', cfg });
+    const payloads = buildPayloads(big, { projectDir: '/w', cfg });
     expect(payloads).toHaveLength(cfg.maxFiles);
     expect(payloads[0].changed_code.length).toBeLessThan(cfg.maxCodeChars + 100);
     expect(payloads[0].description.length).toBeLessThan(cfg.maxDescriptionChars + 100);
   });
 
-  test('keeps absolute paths outside cwd and drops files inside the vault', () => {
+  test('drops files outside the project and files inside the vault', () => {
     const t: Turn = {
       prompt: 'p',
       edits: [
+        { tool: 'Write', filePath: '/w/a.go', content: 'x' },
         { tool: 'Write', filePath: '/elsewhere/a.go', content: 'x' },
-        { tool: 'Write', filePath: '/vault/code/note.md', content: 'x' },
+        { tool: 'Write', filePath: '/w/vault/code/note.md', content: 'x' },
       ],
     };
-    const payloads = buildPayloads(t, { cwd: '/w', cfg: loadHookConfig({ SWARM_KG_VAULT_PATH: '/vault' }) });
-    expect(payloads.map(p => p.file_path)).toEqual(['/elsewhere/a.go']);
+    const payloads = buildPayloads(t, { projectDir: '/w', cfg: loadHookConfig({ SWARM_KG_VAULT_PATH: '/w/vault' }) });
+    expect(payloads.map(p => p.file_path)).toEqual(['a.go']);
   });
 
   test('carries the session id and project when known, and leaves them out when not', () => {
-    const tagged = buildPayloads(turn, { cwd: '/demo/app', cfg, sessionId: 'sess-1', project: 'app' });
+    const tagged = buildPayloads(turn, { projectDir: '/demo/app', cfg, sessionId: 'sess-1', project: 'app' });
     for (const p of tagged) expect(p).toMatchObject({ session_id: 'sess-1', project: 'app' });
 
-    for (const p of buildPayloads(turn, { cwd: '/demo/app', cfg })) {
+    for (const p of buildPayloads(turn, { projectDir: '/demo/app', cfg })) {
       expect(p).not.toHaveProperty('session_id');
       expect(p).not.toHaveProperty('project');
     }

@@ -17,6 +17,10 @@ $ARGUMENTS
 
 When the question above is empty, recall for what the user is asking right now.
 
+## Notes already in your context
+
+With context injection on, the prompt arrives with a `<swarm-kg-reference-notes>` block: excerpts of the notes that best match it, each headed with the note's name and project. Start from those. When the excerpts answer the question, skip the search: open each of them that you use with `get_note` (excerpts are cut short) and go to step 3. Search only for what they don't cover.
+
 ## Steps
 
 1. **Search.** Call `search_notes` with a short query naming the topic in a few words, not the whole question. Pass `kind` when the question names one: `todo` for open todos, `decision` for why something was chosen, `snippet` for a script or command. When no hit is on topic, search once more with different words. Done when you hold the on-topic hits, or two searches found none.

@@ -375,7 +375,9 @@ The [`recall` skill](examples/skills/recall/SKILL.md) tells the agent when
 the graph is worth checking (past work, "how did I...", earlier decisions,
 saved snippets, open todos) and how to use the three tools: search, open the
 best hits, follow links when useful, answer, and cite every note used as a
-`[[wikilink]]` with its project, ending with a **Notes used** list. The agent
+`[[wikilink]]` with its project, ending with a **Notes used** list. With
+context injection on, it starts from the injected notes instead of searching
+again. The agent
 can load it on its own when a request leans on past work, and
 `/recall <question>` makes it answer that question from the graph.
 
@@ -429,9 +431,14 @@ one has your prompt as `description`, `language` from the file extension,
 and `changed_code` from `git diff HEAD -- <file>`, or from the tool input when
 the file isn't tracked; both are capped at 4 KB. Every one also carries the
 `session_id` Claude Code gave the hook and the `project`: the name of the git
-repository the session's `cwd` is in (the main repository's name inside a
-linked worktree), or the `cwd` folder's name outside one. A turn with no edits
-sends nothing.
+repository the session's project directory is in (the main repository's name
+inside a linked worktree), or that folder's name outside one. The project
+directory is `CLAUDE_PROJECT_DIR`, which Claude Code sets to where the session
+started, or the hook input's `cwd` without it; the project root is the top of
+its git repository, or the directory itself outside one. Only files inside the
+project root are captured: Claude also edits files elsewhere, such as its own
+memory files under `~/.claude/projects/`, and those are not the project's
+code. A turn with no edits to project files sends nothing.
 
 It never gets in Claude's way: nothing on stdout, always exit 0, a 2s
 timeout per POST and a 5s hard deadline. It does nothing when
@@ -494,13 +501,27 @@ echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed
   | SWARM_KG_DEBUG=1 node dist/hook/prompt.js
 ```
 
+## Demo
+
+[`demo/`](demo/) holds everything for the live demo: a seed vault, a set-up
+script that creates two throwaway projects wired with the config above, a
+reset script, a context-injection toggle, and
+[`demo/SCRIPT.md`](demo/SCRIPT.md) with every step, prompt, timing and
+fallback.
+
+```bash
+demo/setup.sh ~/swarm-kg-demo && source ~/swarm-kg-demo/demo.env
+demo/service.sh "$DEMO_VAULT"                                # in its own terminal
+demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"    # before each run
+```
+
 ## Development
 
 ```bash
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 182 tests, a couple of seconds, no Docker needed
+npm test             # vitest — 184 tests, a couple of seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
