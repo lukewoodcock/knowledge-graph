@@ -269,5 +269,15 @@ Researcher off.
 | 4. Session B, injection on | 28 s, then 35 s | First run: injected three notes, but the agent searched anyway; the recall skill now starts from injected notes. Second run: no `search_notes`, `get_note` on the injected notes; same correct, cited answer |
 | Fallback question, seed only (after a reset) | 27 s | Correct answer citing the billing-service decision and learning, and the shortlinks todo |
 
-Machine time from reset to the end of step 4: about 4 minutes, which leaves
-room for the talking points inside ten.
+Then the whole demo again in one go with the final kit, from `setup.sh --force`:
+
+| Step | Started | Elapsed | Result |
+|------|---------|---------|--------|
+| Set-up, reset, injection off | 07:45:52 | 2 s | 13 seed notes |
+| 1. Session A | 07:45:54 | 55 s | Limiter written; its checks denied (headless). Code captures took 23 s and 20 s |
+| 2. `/remember` | 07:46:50 | 69 s | 3 memos (decision, two todos), each linked to both code notes; memo run 23 s |
+| 3. Session B, injection off | 07:47:59 | 31 s | Searched, opened four new notes, correct answer citing the new decision memo and code note. It also spotted the Documenter's note giving the sweep as 10 s against the memo's 10 minutes, and said so |
+| 4. Session B, injection on | 07:48:31 | 29 s | No search: opened the injected decision memo and todos; correct answer citing the new decision memo |
+
+Machine time from reset to the end of step 4: **3 min 6 s**, which leaves
+about six minutes for the talking points inside ten.
