@@ -5,7 +5,7 @@ import { chat } from '../ollama';
 import { parseNote } from '../vault';
 import { noteName, RELATED_LINKS_HEADING, vaultRelative, wikilinkTarget } from '../vault-format';
 import { CHUNK_CHARS, EmbeddingIndex, SearchHit } from '../embedding-index';
-import { LinkerResult, NoteResult } from '../types';
+import { LinkerResult, WrittenNote } from '../types';
 
 const SYSTEM_PROMPT =
   'You are a knowledge-graph linking assistant. Your job is to find meaningful ' +
@@ -82,8 +82,8 @@ export function buildNoteIndex(relativePaths: string[]): string {
 }
 
 /** A new note with the existing notes it may link to. */
-interface LinkJob {
-  note: NoteResult;
+interface NoteToLink {
+  note: WrittenNote;
   content: string;
   candidates: SearchHit[];
 }
@@ -94,15 +94,15 @@ function searchText(content: string, fallbackTitle: string): string {
   return `${frontmatter.title || fallbackTitle}\n\n${body.trim()}`.substring(0, CHUNK_CHARS);
 }
 
-function userPrompt(jobs: LinkJob[], language: string, description: string): string {
-  const notes = jobs
-    .map(j =>
+function userPrompt(toLink: NoteToLink[], language: string, description: string): string {
+  const notes = toLink
+    .map(n =>
       [
-        `### New note: ${j.note.notePath}`,
-        `Title: ${j.note.title}`,
-        `Type: ${j.note.agent}`,
+        `### New note: ${n.note.notePath}`,
+        `Title: ${n.note.title}`,
+        `Type: ${n.note.type}`,
         'Candidates (most similar first):',
-        buildNoteIndex(j.candidates.map(c => c.path)),
+        buildNoteIndex(n.candidates.map(c => c.path)),
       ].join('\n'),
     )
     .join('\n\n');
@@ -137,15 +137,19 @@ If no meaningful links exist, return an empty links_to_add array for that note. 
  * notes, and a note is never its own candidate, even when an earlier version
  * of it at the same path is already indexed.
  */
-export async function runLinker(
-  newNotes: NoteResult[],
-  language: string,
-  description: string,
-  cfg: Config,
-  index: Pick<EmbeddingIndex, 'search'>,
-): Promise<LinkerResult> {
-  const jobs: LinkJob[] = [];
-  for (const note of newNotes) {
+export interface LinkerInput {
+  /** The notes the run just wrote. */
+  notes: WrittenNote[];
+  /** The work the notes came from, for the prompt: the capture's language and description. */
+  language: string;
+  description: string;
+  cfg: Config;
+  index: Pick<EmbeddingIndex, 'search'>;
+}
+
+export async function runLinker({ notes, language, description, cfg, index }: LinkerInput): Promise<LinkerResult> {
+  const toLink: NoteToLink[] = [];
+  for (const note of notes) {
     let content: string;
     try {
       content = await fs.readFile(path.resolve(note.notePath), 'utf8');
@@ -155,32 +159,32 @@ export async function runLinker(
     const self = vaultRelative(cfg.vaultPath, note.notePath);
     const hits = await index.search(searchText(content, note.title), { limit: LINK_CANDIDATES + 1 });
     const candidates = hits.filter(h => h.path !== self).slice(0, LINK_CANDIDATES);
-    if (candidates.length > 0) jobs.push({ note, content, candidates });
+    if (candidates.length > 0) toLink.push({ note, content, candidates });
   }
 
   // Nothing to link to (an empty or tiny vault): no need to ask the LLM.
-  if (jobs.length === 0) {
+  if (toLink.length === 0) {
     return { agent: 'linker', status: 'success', linksWritten: 0 };
   }
 
   const raw = await chat(cfg.ollamaUrl, cfg.ollamaModel, [
     { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user', content: userPrompt(jobs, language, description) },
+    { role: 'user', content: userPrompt(toLink, language, description) },
   ], cfg.ollamaThink);
 
   let linksWritten = 0;
   for (const entry of parseLinkMap(raw)) {
     // Only touch the notes we just created, never arbitrary paths the LLM
     // invents.
-    const job = jobs.find(j => j.note.notePath === entry.new_note_path);
-    if (!job) continue;
+    const target = toLink.find(n => n.note.notePath === entry.new_note_path);
+    if (!target) continue;
 
-    const links = filterLinks(entry.links_to_add, job.candidates.map(c => c.name));
-    const updated = appendLinks(job.content, links);
+    const links = filterLinks(entry.links_to_add, target.candidates.map(c => c.name));
+    const updated = appendLinks(target.content, links);
     if (updated === null) continue;
 
-    await fs.writeFile(path.resolve(job.note.notePath), updated, 'utf8');
-    job.content = updated;
+    await fs.writeFile(path.resolve(target.note.notePath), updated, 'utf8');
+    target.content = updated;
     linksWritten++;
   }
 

@@ -36,10 +36,11 @@ async function main(): Promise<void> {
   const files = changedFiles(turn, cfg, scope);
   if (files.length === 0) return log('skip: no project files edited this turn');
 
+  // The project's name and the diffs come from git; ask for them all at once.
   const diffs = new Map<string, string>();
-  const naming = projectName(projectDir);
+  const projectNameLookup = projectName(projectDir);
   await Promise.all(files.map(async f => diffs.set(f.filePath, await gitDiff(projectDir, f.filePath))));
-  const project = await naming;
+  const project = await projectNameLookup;
 
   const payloads = buildPayloads(turn, { ...scope, diffs, cfg, sessionId: input.session_id, project });
   const results = await Promise.all(payloads.map(p => postPayload(cfg.url, p, cfg.timeoutMs)));

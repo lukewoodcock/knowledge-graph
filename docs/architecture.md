@@ -62,10 +62,10 @@ prompt is searched and the few notes that clear the threshold are added.
 
 | Decision | Chosen | Rejected | Why |
 |----------|--------|----------|-----|
-| Store | Markdown vault as the seam ([ADR 0001](adr/0001-markdown-vault-is-the-seam.md)) | Graph or vector database | Notes stay readable and editable in Obsidian; a new source is just another note writer |
+| Vault | Markdown vault as the seam ([ADR 0001](adr/0001-markdown-vault-is-the-seam.md)) | Graph or vector database | Notes stay readable and editable in Obsidian; a new source is just another note writer |
 | Index | One rebuildable file in the vault, brute-force cosine | Vector database | Notes stay the only source of truth; a personal vault is hundreds to low thousands of notes |
 | Chunks | Each `##` section embedded with title, type, kind, project and summary in front; a note scores as its best section | Whole-note embeddings | Long notes would be cut at the model's input limit, and "Key Points" alone matches nothing |
-| Runs | One in-process queue, one run at a time | Parallel runs, a job broker | Parallel runs fight over one local Ollama and fail; a broker is overkill on one machine |
+| Runs | One in-process queue, one run at a time | Parallel runs, a message broker | Parallel runs fight over one local Ollama and fail; a broker is overkill on one machine |
 | Researcher | Off by default | Always on | The graph should hold my knowledge, not generic advice, and runs take about half the time |
 | Who writes memos | The agent in the session | Ollama summarising the transcript | It has the whole conversation and is the strongest model available |
 | Links | Same Session links by rule; the Linker chooses from the 10 most similar notes | The Linker reading every note name | Session links are certain, not guessed; candidates keep the Linker fast and accurate as the vault grows |

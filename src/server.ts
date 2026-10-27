@@ -2,7 +2,7 @@ import express, { Express } from 'express';
 import * as http from 'http';
 import { randomUUID } from 'crypto';
 import { Config } from './config';
-import { SwarmContext, NoteResult, RunStatus } from './types';
+import { CodeCapture, WrittenNote, RunStatus } from './types';
 import { today, appendNote } from './vault';
 import { notePath, sessionLogName } from './vault-format';
 import { runDocumenter } from './agents/documenter';
@@ -50,15 +50,15 @@ async function writeSessionLog(date: string, lines: string[], cfg: Config): Prom
   await appendNote(logFile, (needsHeader ? header : '') + entry + '\n');
 }
 
-/** Result body for a finished swarm run (same shape the sync API returned). */
+/** Result body for a finished run (same shape the sync API returned). */
 type RunResult = Record<string, unknown> & { status: Exclude<RunStatus, 'running'> };
 
 type Run = { status: 'running'; run_id: string } | (RunResult & { run_id: string });
 
-// Runs are kept in memory only; enough to poll a recent trigger.
+// Runs are kept in memory only; enough to poll a recent capture.
 const MAX_RUNS = 100;
 
-async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
+async function runCodeCapture(ctx: CodeCapture, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
   try {
     await writeSessionLog(ctx.today, [
       `- **File:** ${ctx.filePath}`,
@@ -68,19 +68,21 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
 
     // Documenter and (when on) Researcher run in parallel. allSettled so one
     // agent failing doesn't take down the other's note.
-    const settled = await Promise.allSettled([
-      runDocumenter(ctx, cfg),
-      ...(cfg.researcher ? [runResearcher(ctx, cfg)] : []),
-    ]);
+    const agents = [
+      { agent: 'documenter', run: runDocumenter },
+      ...(cfg.researcher ? [{ agent: 'researcher', run: runResearcher }] : []),
+    ];
+    const settled = await Promise.allSettled(agents.map(a => a.run(ctx, cfg)));
 
-    const notes: NoteResult[] = [];
+    const written: Array<{ agent: string; note: WrittenNote }> = [];
     const errors: string[] = [];
-    for (const result of settled) {
-      if (result.status === 'fulfilled') notes.push(result.value);
+    settled.forEach((result, i) => {
+      if (result.status === 'fulfilled') written.push({ agent: agents[i].agent, note: result.value });
       else errors.push(String(result.reason));
-    }
+    });
+    const notes = written.map(w => w.note);
 
-    const linker = await runLinker(notes, ctx.language, ctx.description, cfg, index);
+    const linker = await runLinker({ notes, language: ctx.language, description: ctx.description, cfg, index });
 
     // After the Linker, so the indexed content is the note as finally
     // written (the Linker searches with the note's text, so it doesn't need
@@ -97,7 +99,7 @@ async function runSwarm(ctx: SwarmContext, cfg: Config, index: EmbeddingIndex): 
       session_date: ctx.today,
       file_path: ctx.filePath,
       language: ctx.language,
-      notes: notes.map(n => ({ agent: n.agent, note_path: n.notePath, title: n.title })),
+      notes: written.map(w => ({ agent: w.agent, note_path: w.note.notePath, title: w.note.title })),
       linker: { status: linker.status, links_written: linker.linksWritten },
       ...(errors.length > 0 ? { errors } : {}),
     };
@@ -115,16 +117,11 @@ async function runMemos(memos: Memo[], date: string, cfg: Config, index: Embeddi
 
     // The Linker adds similarity links on top of the session links. A
     // Linker failure leaves the memos written and linked to their session.
-    const notes: NoteResult[] = written.map(w => ({
-      agent: 'memo',
-      status: 'success',
-      notePath: w.notePath,
-      title: w.memo.title,
-    }));
+    const notes: WrittenNote[] = written.map(w => ({ type: 'memo', notePath: w.notePath, title: w.memo.title }));
     const description = memos.map(m => `${m.kind} memo: ${m.title}`).join('; ');
     let linker: { status: string; links_written: number };
     try {
-      const result = await runLinker(notes, 'unknown', description, cfg, index);
+      const result = await runLinker({ notes, language: 'unknown', description, cfg, index });
       linker = { status: result.status, links_written: result.linksWritten };
     } catch (err) {
       errors.push(`linker: ${String(err)}`);
@@ -170,7 +167,7 @@ export function createApp(cfg: Config): Express {
   );
 
   // Every capture joins one queue and runs one at a time, in arrival order,
-  // so several runs never compete for one local Ollama. runSwarm never
+  // so several runs never compete for one local Ollama. runCodeCapture never
   // rejects, so a failed run can't stall the runs behind it.
   let queue: Promise<void> = Promise.resolve();
 
@@ -210,7 +207,7 @@ export function createApp(cfg: Config): Express {
       return;
     }
 
-    const ctx: SwarmContext = {
+    const ctx: CodeCapture = {
       filePath: body.file_path || '',
       language: body.language || 'unknown',
       description: body.description || '',
@@ -220,7 +217,7 @@ export function createApp(cfg: Config): Express {
       project: trimmedString(body.project),
     };
 
-    res.status(202).json(enqueue(ctx.filePath || ctx.description, () => runSwarm(ctx, cfg, index)));
+    res.status(202).json(enqueue(ctx.filePath || ctx.description, () => runCodeCapture(ctx, cfg, index)));
   });
 
   // Memos: captures the session's agent already wrote. Same queue and reply

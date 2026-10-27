@@ -1,5 +1,5 @@
-/** Context received from the IDE webhook, normalised. */
-export interface SwarmContext {
+/** A code capture as the trigger endpoint received it, normalised. */
+export interface CodeCapture {
   filePath: string;
   language: string;
   description: string;
@@ -11,10 +11,10 @@ export interface SwarmContext {
   project?: string;
 }
 
-/** A note a run just wrote: by the Documenter or Researcher, or a memo. */
-export interface NoteResult {
-  agent: 'documenter' | 'researcher' | 'memo';
-  status: 'success';
+/** A note a run just wrote: the Documenter's, the Researcher's, or a memo's. */
+export interface WrittenNote {
+  /** The note's type, as its frontmatter gives it. */
+  type: 'code' | 'research' | 'memo';
   notePath: string;
   title: string;
 }
