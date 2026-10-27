@@ -1,6 +1,6 @@
 import { Config } from '../config';
 import { chat } from '../ollama';
-import { addFrontmatterFields, captureFields, writeNote } from '../vault';
+import { captureFields, setFrontmatterFields, writeNote } from '../vault';
 import { notePath as notePathIn, researchNoteName, safeTitle } from '../vault-format';
 import { SwarmContext, NoteResult } from '../types';
 
@@ -59,7 +59,7 @@ export async function runResearcher(ctx: SwarmContext, cfg: Config): Promise<Not
   const topic = ctx.description || ctx.filePath;
   const title = safeTitle(topic || 'unknown');
   const notePath = notePathIn(cfg.vaultPath, 'research', researchNoteName(ctx.today, ctx.project, topic));
-  await writeNote(notePath, addFrontmatterFields(content, captureFields(ctx)));
+  await writeNote(notePath, setFrontmatterFields(content, captureFields('research', ctx)));
 
   return { agent: 'researcher', status: 'success', notePath, title };
 }

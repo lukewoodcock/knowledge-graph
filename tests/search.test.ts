@@ -13,6 +13,7 @@ import {
   createMockOllamaState,
   embeddedTexts,
   listen,
+  replyToEmbed,
   resetMockOllamaState,
 } from './helpers/mock-ollama';
 import { triggerAndWait } from './helpers/runs';
@@ -226,6 +227,46 @@ describe('search over the embedding index (end-to-end)', () => {
     for (const r of res.body.results) {
       expect(r.kind).not.toBe('research');
       expect(r.path).not.toMatch(/^research\//);
+    }
+  });
+
+  test("a note's own type decides whether it is research, wherever it lives", async () => {
+    await writeVaultNote('imported/advice.md', ['---', 'title: "Advice"', 'type: "research"', '---', '', '## Overview', 'jwt'].join('\n'));
+    await writeVaultNote('research/mine.md', ['---', 'title: "Mine"', 'type: "code"', '---', '', '## Overview', 'jwt'].join('\n'));
+
+    const res = await search(createApp(cfg), { query: 'jwt', limit: 50 });
+
+    expect(res.body.results.map((r: { name: string }) => r.name)).toEqual(['mine']);
+  });
+
+  test("the Researcher's note is typed research even when the model's frontmatter says otherwise", async () => {
+    // A model that types its research note "code" and its code note "research".
+    const confused = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', c => (body += c));
+      req.on('end', () => {
+        if (req.url === '/api/embed') return replyToEmbed(mockState, body, res);
+        const system: string = JSON.parse(body).messages?.[0]?.content ?? '';
+        const type = system.includes('research assistant') ? 'code' : 'research';
+        const content = system.includes('linking') ? '[]' : `---\ntitle: "JWT"\ntype: "${type}"\n---\n\n## Overview\njwt`;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ message: { role: 'assistant', content } }));
+      });
+    });
+    const port = await listen(confused);
+    try {
+      const app = createApp({ ...cfg, researcher: true, ollamaUrl: `http://127.0.0.1:${port}` });
+      const run = await triggerAndWait(app, PAYLOAD);
+      const research = run.body.notes.find((n: { agent: string }) => n.agent === 'researcher');
+      const code = run.body.notes.find((n: { agent: string }) => n.agent === 'documenter');
+
+      const res = await search(app, { query: 'jwt', limit: 50 });
+
+      expect(res.body.results.map((r: { name: string }) => r.name)).toEqual([path.basename(code.note_path, '.md')]);
+      const content = await fs.readFile(research.note_path, 'utf8');
+      expect(content.match(/^type:.*$/gm)).toEqual(['type: "research"']);
+    } finally {
+      await close(confused);
     }
   });
 

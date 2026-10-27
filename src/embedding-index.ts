@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { Config } from './config';
 import { embed } from './ollama';
 import { listMarkdownFiles, parseNote } from './vault';
-import { isRecallable, LINK_SECTION_HEADINGS, noteName, vaultRelative } from './vault-format';
+import { isRecallable, isResearch, LINK_SECTION_HEADINGS, noteName, vaultRelative } from './vault-format';
 
 /**
  * The embedding index: every note's sections embedded with Ollama, kept in
@@ -62,7 +62,8 @@ const SNIPPET_LENGTH = 300;
 
 /** Where the index lives, relative to the vault root. Obsidian hides dot folders. */
 export const INDEX_FILE = path.join('.swarm-kg', 'index.json');
-const INDEX_VERSION = 1;
+// 2: research is decided by the note's type alone, no longer by its folder.
+const INDEX_VERSION = 2;
 
 interface IndexedSection {
   /** The section (or one chunk of a long one) as written in the note, heading included. */
@@ -276,7 +277,7 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
       hash,
       kind,
       project,
-      research: frontmatter.type === 'research' || relPath.startsWith('research/'),
+      research: isResearch(frontmatter),
       sections: texts.map((text, i) => ({ text, vector: vectors[i] })),
     };
   }

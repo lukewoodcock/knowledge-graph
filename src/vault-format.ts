@@ -49,6 +49,14 @@ export function isRecallable(relPath: string): boolean {
   return isNote(relPath) && !isSessionLog(relPath);
 }
 
+/**
+ * Research notes (the Researcher's generic advice) are left out of recall.
+ * Decided by the note's own `type`, so it holds wherever the note lives.
+ */
+export function isResearch(frontmatter: Record<string, string>): boolean {
+  return frontmatter.type === 'research';
+}
+
 /** The heading of the section where the service lists a memo's same-session links. */
 export const SESSION_LINKS_HEADING = 'Same Session';
 
