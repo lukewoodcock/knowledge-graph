@@ -14,8 +14,8 @@
  * running when the wait ran out (the output says how to check again).
  */
 import { projectName } from './hook/io';
+import { positiveInt, serviceUrl } from './env';
 
-const DEFAULT_SERVICE_URL = 'http://127.0.0.1:5678';
 const REQUEST_TIMEOUT_MS = 10_000;
 // Under the Bash tool's default two-minute timeout.
 const DEFAULT_WAIT_MS = 100_000;
@@ -42,11 +42,6 @@ interface RunStatus {
 function flag(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
-}
-
-function int(v: string | undefined, fallback: number): number {
-  const n = parseInt(v ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 /** The memos on stdin: one memo, a list of them, or `{ "memos": [...] }`. */
@@ -125,10 +120,10 @@ export async function remember(
   opts: Options = {},
 ): Promise<number> {
   const svc: Service = {
-    base: (env.SWARM_KG_SERVICE_URL || DEFAULT_SERVICE_URL).replace(/\/+$/, ''),
+    base: serviceUrl(env),
     log,
     pollMs: opts.pollMs ?? 1000,
-    waitMs: int(env.SWARM_KG_REMEMBER_WAIT_MS, DEFAULT_WAIT_MS),
+    waitMs: positiveInt(env.SWARM_KG_REMEMBER_WAIT_MS, DEFAULT_WAIT_MS),
   };
   const unreachable = (err: Unreachable, what: string) => {
     log(`The swarm-kg service is not reachable at ${svc.base} (${err.message}). Is it running? ${what}`);

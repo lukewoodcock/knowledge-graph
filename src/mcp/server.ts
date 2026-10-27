@@ -9,8 +9,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { serviceUrl } from '../env';
 
-const DEFAULT_SERVICE_URL = 'http://127.0.0.1:5678';
 // A search can queue behind the startup sync embedding new notes.
 const TIMEOUT_MS = 30_000;
 
@@ -33,9 +33,9 @@ function toolError(t: string): CallToolResult {
   return { content: [{ type: 'text', text: t }], isError: true };
 }
 
-/** Builds the MCP server; `serviceUrl` is the service's base URL. */
-export function buildMcpServer(serviceUrl: string): McpServer {
-  const base = `${serviceUrl.replace(/\/+$/, '')}/webhook/knowledge-graph`;
+/** Builds the MCP server; `baseUrl` is the service's base URL, as serviceUrl() gives it. */
+export function buildMcpServer(baseUrl: string): McpServer {
+  const base = `${baseUrl}/webhook/knowledge-graph`;
   const server = new McpServer({ name: 'swarm-kg', version: '1.0.0' });
 
   /**
@@ -50,7 +50,7 @@ export function buildMcpServer(serviceUrl: string): McpServer {
       res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
     } catch (err) {
       return toolError(
-        `The swarm-kg service is not reachable at ${serviceUrl}. Is it running? (${errorMessage(err)})`,
+        `The swarm-kg service is not reachable at ${baseUrl}. Is it running? (${errorMessage(err)})`,
       );
     }
     const body = (await res.json().catch(() => undefined)) as { error?: unknown } | undefined;
@@ -111,7 +111,7 @@ export function buildMcpServer(serviceUrl: string): McpServer {
 }
 
 if (require.main === module) {
-  const server = buildMcpServer(process.env.SWARM_KG_SERVICE_URL || DEFAULT_SERVICE_URL);
+  const server = buildMcpServer(serviceUrl());
   server.connect(new StdioServerTransport()).catch(err => {
     console.error(`swarm-kg mcp: ${String(err)}`);
     process.exit(1);

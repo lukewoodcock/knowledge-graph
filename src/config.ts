@@ -1,3 +1,5 @@
+import { positiveInt } from './env';
+
 export interface Config {
   /** Address to listen on. Loopback by default, so nothing else on the network can reach the service. */
   host: string;
@@ -16,7 +18,7 @@ export interface Config {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     host: env.HOST || '127.0.0.1',
-    port: parseInt(env.PORT || '5678', 10),
+    port: positiveInt(env.PORT, 5678),
     vaultPath: env.VAULT_PATH || '/vault',
     ollamaUrl: env.OLLAMA_URL || 'http://ollama:11434',
     ollamaModel: env.OLLAMA_MODEL || 'qwen3.5:9b',
