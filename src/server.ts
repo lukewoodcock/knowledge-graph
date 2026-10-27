@@ -1,10 +1,10 @@
 import express, { Express } from 'express';
 import * as http from 'http';
-import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { Config } from './config';
 import { SwarmContext, NoteResult, RunStatus } from './types';
 import { today, appendNote } from './vault';
+import { notePath, sessionLogName } from './vault-format';
 import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
@@ -24,7 +24,7 @@ interface WebhookPayload {
 
 /** Appends one capture's entry (its `- **Field:** value` lines) to the day's session log. */
 async function writeSessionLog(date: string, lines: string[], cfg: Config): Promise<void> {
-  const logFile = path.join(cfg.vaultPath, 'logs', `${date}_session_log.md`);
+  const logFile = notePath(cfg.vaultPath, 'logs', sessionLogName(date));
   const entry = [`## ${new Date().toISOString()}`, '', ...lines, ''].join('\n');
 
   // First entry of the day gets frontmatter; later entries append below it.

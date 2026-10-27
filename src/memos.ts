@@ -1,7 +1,8 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { Config } from './config';
-import { listMarkdownFiles, parseNote, safeTitle, writeNote } from './vault';
+import { listMarkdownFiles, parseNote, writeNote } from './vault';
+import { FOLDERS, isRecallable, memoNoteName, noteName, notePath, sectionLinks, RELATED_LINKS_HEADING, SESSION_LINKS_HEADING } from './vault-format';
 import { Memo } from './requests';
 
 /** One memo's note once a run has written it. */
@@ -16,9 +17,9 @@ export interface MemoNote {
 
 /** A free path for a memo's note: `memos/<date>_<title>.md`, numbered if taken. */
 async function freeNotePath(cfg: Config, date: string, title: string): Promise<string> {
-  const base = `${date}_${safeTitle(title) || 'memo'}`;
+  const base = memoNoteName(date, title);
   for (let n = 1; ; n++) {
-    const candidate = path.join(cfg.vaultPath, 'memos', `${n === 1 ? base : `${base}_${n}`}.md`);
+    const candidate = notePath(cfg.vaultPath, 'memos', n === 1 ? base : `${base}_${n}`);
     try {
       await fs.access(candidate);
     } catch {
@@ -27,9 +28,6 @@ async function freeNotePath(cfg: Config, date: string, title: string): Promise<s
   }
 }
 
-/** The heading of the section holding a memo's same-session links. */
-export const SESSION_LINKS_HEADING = 'Same Session';
-
 /**
  * Names of the notes code captures wrote in each session, keyed by session.
  * Memos, session logs and dot folders are left out.
@@ -37,7 +35,7 @@ export const SESSION_LINKS_HEADING = 'Same Session';
 async function codeNotesBySession(cfg: Config): Promise<Map<string, string[]>> {
   const bySession = new Map<string, string[]>();
   const relPaths = (await listMarkdownFiles(cfg.vaultPath)).filter(
-    p => !p.startsWith('memos/') && !p.startsWith('logs/') && !p.split('/').some(seg => seg.startsWith('.')),
+    p => isRecallable(p) && !p.startsWith(`${FOLDERS.memos}/`),
   );
   for (const relPath of relPaths) {
     let content: string;
@@ -48,7 +46,7 @@ async function codeNotesBySession(cfg: Config): Promise<Map<string, string[]>> {
     }
     const session = parseNote(content).frontmatter.session;
     if (!session) continue;
-    bySession.set(session, [...(bySession.get(session) ?? []), path.basename(relPath, '.md')]);
+    bySession.set(session, [...(bySession.get(session) ?? []), noteName(relPath)]);
   }
   return bySession;
 }
@@ -76,19 +74,6 @@ function renderMemo(memo: Memo, date: string, sessionLinks: string[]): string {
   return `${frontmatter}\n\n${memo.body}${links}\n`;
 }
 
-/** Link targets listed under a `## <heading>` section of a note. */
-function sectionLinks(content: string, heading: string): string[] {
-  const lines = content.split(/\r?\n/);
-  const start = lines.findIndex(l => l.trim() === `## ${heading}`);
-  if (start < 0) return [];
-  const links: string[] = [];
-  for (const line of lines.slice(start + 1)) {
-    if (/^#{1,2} /.test(line)) break;
-    for (const m of line.matchAll(/\[\[([^\]|#]+)[^\]]*\]\]/g)) links.push(m[1].trim());
-  }
-  return links;
-}
-
 /**
  * Every note a memo links to as written now: its session links, then the
  * Linker's similarity links, each name once.
@@ -96,7 +81,7 @@ function sectionLinks(content: string, heading: string): string[] {
 export async function memoLinks(note: MemoNote): Promise<string[]> {
   let similar: string[] = [];
   try {
-    similar = sectionLinks(await fs.readFile(note.notePath, 'utf8'), 'Related Notes');
+    similar = sectionLinks(await fs.readFile(note.notePath, 'utf8'), RELATED_LINKS_HEADING);
   } catch {
     // Gone since the run wrote it; the session links are still what was written.
   }
@@ -113,9 +98,9 @@ export async function writeMemos(memos: Memo[], date: string, cfg: Config): Prom
   const written: MemoNote[] = [];
   for (const memo of memos) {
     const sessionLinks = bySession.get(memo.session) ?? [];
-    const notePath = await freeNotePath(cfg, date, memo.title);
-    await writeNote(notePath, renderMemo(memo, date, sessionLinks));
-    written.push({ memo, notePath, name: path.basename(notePath, '.md'), sessionLinks });
+    const fullPath = await freeNotePath(cfg, date, memo.title);
+    await writeNote(fullPath, renderMemo(memo, date, sessionLinks));
+    written.push({ memo, notePath: fullPath, name: noteName(fullPath), sessionLinks });
   }
   return written;
 }

@@ -6,18 +6,6 @@ export function today(): string {
   return new Date().toISOString().split('T')[0];
 }
 
-/**
- * Sanitises arbitrary text into a filesystem-safe title: non-alphanumeric
- * characters (except _ - .) become underscores, leading/trailing underscores
- * are stripped, and the result is truncated to maxLen characters.
- */
-export function safeTitle(input: string, maxLen = 60): string {
-  return input
-    .replace(/[^a-zA-Z0-9_\-.]/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .substring(0, maxLen);
-}
-
 export interface Frontmatter {
   title: string;
   date: string;

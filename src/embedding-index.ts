@@ -4,7 +4,7 @@ import { createHash } from 'crypto';
 import { Config } from './config';
 import { embed } from './ollama';
 import { listMarkdownFiles, parseNote } from './vault';
-import { SESSION_LINKS_HEADING } from './memos';
+import { isRecallable, LINK_SECTION_HEADINGS, noteName, vaultRelative } from './vault-format';
 
 /**
  * The embedding index: every note's sections embedded with Ollama, kept in
@@ -86,13 +86,8 @@ interface IndexFile {
   notes: Record<string, IndexedNote>;
 }
 
-/** Session logs are never recalled, and dot folders (.obsidian, .trash) aren't notes. */
-function isIndexable(relPath: string): boolean {
-  return !relPath.startsWith('logs/') && !relPath.split('/').some(seg => seg.startsWith('.'));
-}
-
 /** Headings (lower case) of the sections that only list links. */
-const LINK_SECTIONS = ['related notes', SESSION_LINKS_HEADING.toLowerCase()];
+const LINK_SECTIONS = LINK_SECTION_HEADINGS.map(h => h.toLowerCase());
 
 /**
  * Splits a note body into its `##` sections. Text before the first `##`
@@ -258,14 +253,9 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
     await fs.rename(tmp, indexPath);
   }
 
-  function relative(notePath: string): string {
-    const abs = path.resolve(cfg.vaultPath, notePath);
-    return path.relative(cfg.vaultPath, abs).split(path.sep).join('/');
-  }
-
   async function embedNote(relPath: string, content: string, hash: string): Promise<IndexedNote> {
     const { frontmatter, body } = parseNote(content);
-    const name = path.basename(relPath, '.md');
+    const name = noteName(relPath);
     const kind = frontmatter.kind || frontmatter.type || null;
     const project = frontmatter.project || null;
     const sections = splitSections(body);
@@ -312,7 +302,7 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
 
   /** Refreshes every note in the vault into `index` and drops entries for deleted notes. */
   async function syncInto(index: IndexFile): Promise<IndexSummary> {
-    const relPaths = (await listMarkdownFiles(cfg.vaultPath)).filter(isIndexable);
+    const relPaths = (await listMarkdownFiles(cfg.vaultPath)).filter(isRecallable);
     const present = new Set(relPaths);
     let embedded = 0;
     let removed = 0;
@@ -333,7 +323,7 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
       exclusive(async () => {
         const index = await load();
         let changed = false;
-        for (const relPath of notePaths.map(relative).filter(isIndexable)) {
+        for (const relPath of notePaths.map(p => vaultRelative(cfg.vaultPath, p)).filter(isRecallable)) {
           if ((await refresh(index, relPath)) !== 'unchanged') changed = true;
         }
         if (changed) await save(index);
@@ -379,7 +369,7 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
           }
           if (!best) continue;
           hits.push({
-            name: path.basename(relPath, '.md'),
+            name: noteName(relPath),
             path: relPath,
             kind: note.kind,
             project: note.project,

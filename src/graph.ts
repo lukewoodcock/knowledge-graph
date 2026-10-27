@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { listMarkdownFiles, parseNote } from './vault';
+import { isNote, isSessionLog, linkTargets, noteName } from './vault-format';
 
 /**
  * Reading the graph by name: one note in full, and the notes linked to and
@@ -17,15 +18,6 @@ export interface NoteView {
   frontmatter: Record<string, string>;
   /** The note's markdown after its frontmatter. */
   content: string;
-}
-
-/** Dot folders (.obsidian, .trash, the index) don't hold notes. */
-function isNote(relPath: string): boolean {
-  return !relPath.split('/').some(seg => seg.startsWith('.'));
-}
-
-function noteName(relPath: string): string {
-  return path.basename(relPath, '.md');
 }
 
 async function notePaths(vaultPath: string): Promise<string[]> {
@@ -59,19 +51,6 @@ export interface RelatedNotes {
   name: string;
   outgoing: LinkedNote[];
   incoming: LinkedNote[];
-}
-
-/** Session logs record every capture; they're never a link target or source. */
-function isSessionLog(relPath: string): boolean {
-  return relPath.startsWith('logs/');
-}
-
-/** The note names a note's `[[wikilinks]]` point at, in order, without repeats. */
-function linkTargets(content: string): string[] {
-  const names = [...content.matchAll(/\[\[([^\]]+)\]\]/g)]
-    .map(m => m[1].split(/[|#]/)[0].trim())
-    .filter(n => n !== '');
-  return [...new Set(names)];
 }
 
 /**

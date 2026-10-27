@@ -1,7 +1,7 @@
-import * as path from 'path';
 import { Config } from '../config';
 import { chat } from '../ollama';
-import { addFrontmatterFields, captureFields, safeTitle, writeNote } from '../vault';
+import { addFrontmatterFields, captureFields, writeNote } from '../vault';
+import { notePath as notePathIn, researchNoteName, safeTitle } from '../vault-format';
 import { SwarmContext, NoteResult } from '../types';
 
 const SYSTEM_PROMPT =
@@ -56,8 +56,9 @@ export async function runResearcher(ctx: SwarmContext, cfg: Config): Promise<Not
     { role: 'user', content: userPrompt(ctx) },
   ], cfg.ollamaThink);
 
-  const title = safeTitle(ctx.description || ctx.filePath || 'unknown');
-  const notePath = path.join(cfg.vaultPath, 'research', `${ctx.today}_research_${title}.md`);
+  const topic = ctx.description || ctx.filePath;
+  const title = safeTitle(topic || 'unknown');
+  const notePath = notePathIn(cfg.vaultPath, 'research', researchNoteName(ctx.today, topic));
   await writeNote(notePath, addFrontmatterFields(content, captureFields(ctx)));
 
   return { agent: 'researcher', status: 'success', notePath, title };

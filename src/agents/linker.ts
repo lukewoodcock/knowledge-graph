@@ -3,6 +3,7 @@ import * as path from 'path';
 import { Config } from '../config';
 import { chat } from '../ollama';
 import { parseNote } from '../vault';
+import { noteName, RELATED_LINKS_HEADING, vaultRelative, wikilinkTarget } from '../vault-format';
 import { CHUNK_CHARS, EmbeddingIndex, SearchHit } from '../embedding-index';
 import { LinkerResult, NoteResult } from '../types';
 
@@ -51,14 +52,9 @@ export function parseLinkMap(raw: string): LinkMapEntry[] {
  */
 export function appendLinks(content: string, links: string[]): string | null {
   if (links.length === 0) return null;
-  if (content.includes('## Related Notes')) return null;
-  const section = `\n\n## Related Notes\n${links.map(l => `- ${l}`).join('\n')}\n`;
+  if (content.includes(`## ${RELATED_LINKS_HEADING}`)) return null;
+  const section = `\n\n## ${RELATED_LINKS_HEADING}\n${links.map(l => `- ${l}`).join('\n')}\n`;
   return content + section;
-}
-
-/** "[[name|alias]]" or "[[name#heading]]" -> "name". */
-function linkTarget(link: string): string {
-  return link.replace(/^\[\[/, '').replace(/\]\]$/, '').split(/[|#]/)[0].trim();
 }
 
 /**
@@ -71,7 +67,7 @@ export function filterLinks(links: string[], candidateNames: string[]): string[]
   const seen = new Set<string>();
   return links.filter(l => {
     if (typeof l !== 'string') return false;
-    const target = linkTarget(l);
+    const target = wikilinkTarget(l);
     if (!candidateNames.includes(target) || seen.has(target)) return false;
     seen.add(target);
     return true;
@@ -81,10 +77,7 @@ export function filterLinks(links: string[], candidateNames: string[]): string[]
 /** Builds the "- [[basename]] (relative/path.md)" index for the prompt. */
 export function buildNoteIndex(relativePaths: string[]): string {
   return relativePaths
-    .map(f => {
-      const base = f.replace(/^.*\//, '').replace(/\.md$/, '');
-      return `- [[${base}]] (${f})`;
-    })
+    .map(f => `- [[${noteName(f)}]] (${f})`)
     .join('\n');
 }
 
@@ -159,7 +152,7 @@ export async function runLinker(
     } catch {
       continue;
     }
-    const self = path.relative(cfg.vaultPath, path.resolve(note.notePath)).split(path.sep).join('/');
+    const self = vaultRelative(cfg.vaultPath, note.notePath);
     const hits = await index.search(searchText(content, note.title), { limit: LINK_CANDIDATES + 1 });
     const candidates = hits.filter(h => h.path !== self).slice(0, LINK_CANDIDATES);
     if (candidates.length > 0) jobs.push({ note, content, candidates });

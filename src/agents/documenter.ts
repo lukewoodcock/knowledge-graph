@@ -1,7 +1,7 @@
-import * as path from 'path';
 import { Config } from '../config';
 import { chat } from '../ollama';
-import { addFrontmatterFields, captureFields, safeTitle, writeNote } from '../vault';
+import { addFrontmatterFields, captureFields, writeNote } from '../vault';
+import { codeNoteName, notePath as notePathIn, safeTitle } from '../vault-format';
 import { SwarmContext, NoteResult } from '../types';
 
 const SYSTEM_PROMPT =
@@ -53,7 +53,7 @@ export async function runDocumenter(ctx: SwarmContext, cfg: Config): Promise<Not
   ], cfg.ollamaThink);
 
   const title = safeTitle(ctx.filePath || 'unknown');
-  const notePath = path.join(cfg.vaultPath, 'code', `${ctx.today}_${title}.md`);
+  const notePath = notePathIn(cfg.vaultPath, 'code', codeNoteName(ctx.today, ctx.filePath));
   await writeNote(notePath, addFrontmatterFields(content, captureFields(ctx)));
 
   return { agent: 'documenter', status: 'success', notePath, title };
