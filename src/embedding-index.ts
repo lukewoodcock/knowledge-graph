@@ -225,10 +225,16 @@ function emptyIndex(model: string): IndexFile {
 
 export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
   const indexPath = path.join(cfg.vaultPath, INDEX_FILE);
-  let loaded: IndexFile | undefined;
-  // Every operation runs after the previous one settles, so a run indexing
-  // its notes, a startup sync and a search never interleave on the file.
+  // One load, shared by every caller, so two first calls can't each read
+  // the file and end up with different copies of the index.
+  let loaded: Promise<IndexFile> | undefined;
+  // Writes run one after another, so a run indexing its notes, a startup
+  // sync and a rebuild never interleave on the file. Searches don't join
+  // this queue: they read the index in memory as it is.
   let queue: Promise<unknown> = Promise.resolve();
+  // The sync in progress, if any. A search waits for it, so a search right
+  // after startup doesn't see a half-built index.
+  let syncing: Promise<unknown> = Promise.resolve();
 
   function exclusive<T>(op: () => Promise<T>): Promise<T> {
     const result = queue.then(op);
@@ -237,15 +243,16 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
   }
 
   /** The index file, or an empty index if it's missing, unreadable or for another model. */
-  async function load(): Promise<IndexFile> {
-    if (loaded) return loaded;
-    try {
-      const parsed = JSON.parse(await fs.readFile(indexPath, 'utf8')) as IndexFile;
-      const usable = parsed.version === INDEX_VERSION && parsed.model === cfg.embedModel && parsed.notes;
-      loaded = usable ? parsed : emptyIndex(cfg.embedModel);
-    } catch {
-      loaded = emptyIndex(cfg.embedModel);
-    }
+  function load(): Promise<IndexFile> {
+    loaded ??= (async () => {
+      try {
+        const parsed = JSON.parse(await fs.readFile(indexPath, 'utf8')) as IndexFile;
+        const usable = parsed.version === INDEX_VERSION && parsed.model === cfg.embedModel && parsed.notes;
+        return usable ? parsed : emptyIndex(cfg.embedModel);
+      } catch {
+        return emptyIndex(cfg.embedModel);
+      }
+    })();
     return loaded;
   }
 
@@ -327,13 +334,16 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
         if (changed) await save(index);
       }),
 
-    sync: () =>
-      exclusive(async () => {
+    sync: () => {
+      const result = exclusive(async () => {
         const index = await load();
         const summary = await syncInto(index);
         if (summary.embedded > 0 || summary.removed > 0) await save(index);
         return summary;
-      }),
+      });
+      syncing = result.catch(() => undefined);
+      return result;
+    },
 
     rebuild: () =>
       exclusive(async () => {
@@ -342,44 +352,48 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
         const fresh = emptyIndex(cfg.embedModel);
         const summary = await syncInto(fresh);
         await save(fresh);
-        loaded = fresh;
+        loaded = Promise.resolve(fresh);
         return { ...summary, removed: 0 };
       }),
 
-    search: (query, options = {}) =>
-      exclusive(async () => {
-        const index = await load();
-        const limit = Math.min(options.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
-        const [queryVector] = await embed(cfg.ollamaUrl, cfg.embedModel, [query]);
+    // Not exclusive: a search mustn't wait seconds behind a run's embeds,
+    // since the context-injection hook gives up after 1.5s. It sees the
+    // notes indexed so far; the loop below has no await, so it never sees
+    // a note half-updated.
+    search: async (query, options = {}) => {
+      await syncing;
+      const index = await load();
+      const limit = Math.min(options.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+      const [queryVector] = await embed(cfg.ollamaUrl, cfg.embedModel, [query]);
 
-        const hits: SearchHit[] = [];
-        for (const [relPath, note] of Object.entries(index.notes)) {
-          if (note.research) continue;
-          if (options.type !== undefined && note.type !== options.type) continue;
-          if (options.kind !== undefined && note.kind !== options.kind) continue;
-          if (options.status !== undefined && note.status !== options.status) continue;
-          let best: IndexedSection | undefined;
-          let bestScore = -Infinity;
-          for (const section of note.sections) {
-            const score = cosine(queryVector, section.vector);
-            if (score > bestScore) {
-              bestScore = score;
-              best = section;
-            }
+      const hits: SearchHit[] = [];
+      for (const [relPath, note] of Object.entries(index.notes)) {
+        if (note.research) continue;
+        if (options.type !== undefined && note.type !== options.type) continue;
+        if (options.kind !== undefined && note.kind !== options.kind) continue;
+        if (options.status !== undefined && note.status !== options.status) continue;
+        let best: IndexedSection | undefined;
+        let bestScore = -Infinity;
+        for (const section of note.sections) {
+          const score = cosine(queryVector, section.vector);
+          if (score > bestScore) {
+            bestScore = score;
+            best = section;
           }
-          if (!best) continue;
-          hits.push({
-            name: noteName(relPath),
-            path: relPath,
-            type: note.type,
-            kind: note.kind,
-            status: note.status,
-            project: note.project,
-            snippet: snippet(best.text),
-            score: bestScore,
-          });
         }
-        return hits.sort((a, b) => b.score - a.score).slice(0, limit);
-      }),
+        if (!best) continue;
+        hits.push({
+          name: noteName(relPath),
+          path: relPath,
+          type: note.type,
+          kind: note.kind,
+          status: note.status,
+          project: note.project,
+          snippet: snippet(best.text),
+          score: bestScore,
+        });
+      }
+      return hits.sort((a, b) => b.score - a.score).slice(0, limit);
+    },
   };
 }

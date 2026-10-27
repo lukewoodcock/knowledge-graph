@@ -16,7 +16,8 @@ import {
   replyToEmbed,
   resetMockOllamaState,
 } from './helpers/mock-ollama';
-import { triggerAndWait } from './helpers/runs';
+import { triggerAndWait, waitForRun } from './helpers/runs';
+import { createEmbeddingIndex } from '../src/embedding-index';
 import { reindex } from '../src/reindex';
 
 const SEARCH_URL = '/webhook/knowledge-graph/search';
@@ -368,6 +369,94 @@ describe('search over the embedding index (end-to-end)', () => {
 
     const calls = mockState.embedCalls.filter(c => c.input.some(t => t.startsWith('Note: Note')));
     expect(calls.map(c => c.model)).toEqual(['newer-embed']);
+  });
+
+  describe('while the index is busy', () => {
+    /**
+     * Mock Ollama whose embeds of note sections (the "Note: " context prefix)
+     * wait while the gate is shut; query embeds always answer at once.
+     */
+    function gatedOllama() {
+      const held: Array<() => void> = [];
+      const gate = {
+        shut: false,
+        held,
+        open() {
+          gate.shut = false;
+          held.splice(0).forEach(release => release());
+        },
+      };
+      const server = http.createServer((req, res) => {
+        let body = '';
+        req.on('data', c => (body += c));
+        req.on('end', () => {
+          if (req.url !== '/api/embed') {
+            // Documenter and Linker: the mock's usual replies are enough here.
+            const system: string = JSON.parse(body).messages?.[0]?.content ?? '';
+            const content = system.includes('linking') ? '[]' : '---\ntitle: "JWT"\ntype: "code"\n---\n\n## Notes\njwt';
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ message: { role: 'assistant', content } }));
+            return;
+          }
+          const input: string[] = [JSON.parse(body).input].flat();
+          const reply = () => replyToEmbed(mockState, body, res);
+          if (gate.shut && input.some(t => t.startsWith('Note: '))) held.push(reply);
+          else reply();
+        });
+      });
+      return { server, gate };
+    }
+
+    async function until(check: () => boolean): Promise<void> {
+      const deadline = Date.now() + 2000;
+      while (!check()) {
+        if (Date.now() > deadline) throw new Error('timed out waiting');
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+    }
+
+    /** Resolves with the request's response, or with 'timed out' after ms. */
+    function within<T>(ms: number, p: Promise<T>): Promise<T | 'timed out'> {
+      return Promise.race([p, new Promise<'timed out'>(resolve => setTimeout(() => resolve('timed out'), ms))]);
+    }
+
+    test("a search answers at once while a run is still indexing its notes, from the notes indexed so far", async () => {
+      const { server, gate } = gatedOllama();
+      const port = await listen(server);
+      try {
+        await writeVaultNote('code/by-hand.md', plainNote('By hand', ['## Notes', 'docker']));
+        const app = createApp({ ...cfg, ollamaUrl: `http://127.0.0.1:${port}` });
+        expect(await resultNames(app, 'docker')).toEqual(['by-hand']);
+
+        gate.shut = true;
+        const accepted = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+        await until(() => gate.held.length > 0);
+
+        const res = await within(1000, search(app, { query: 'docker' }));
+
+        expect(res).not.toBe('timed out');
+        expect((res as request.Response).body.results[0].name).toBe('by-hand');
+
+        gate.open();
+        const run = await waitForRun(app, accepted.body.status_url);
+        const codeNote = path.basename(run.body.notes[0].note_path, '.md');
+        expect(await resultNames(app, 'jwt')).toContain(codeNote);
+      } finally {
+        gate.open();
+        await close(server);
+      }
+    });
+
+    test('a note indexed while the very first search loads the index is found by later searches', async () => {
+      await writeVaultNote('code/old.md', plainNote('Old', ['## Notes', 'docker']));
+      await createEmbeddingIndex(cfg).sync();
+      await writeVaultNote('code/new.md', plainNote('New', ['## Notes', 'kafka']));
+
+      const index = createEmbeddingIndex(cfg);
+      await Promise.all([index.indexNotes(['code/new.md']), index.search('docker')]);
+
+      expect((await index.search('kafka')).filter(h => h.score > 0).map(h => h.name)).toEqual(['new']);
+    });
   });
 
   describe('reindex', () => {
