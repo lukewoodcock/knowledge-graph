@@ -210,7 +210,7 @@ every project; the notes are plain markdown and the index rebuilds from them.
 | Session B doesn't use recall on its own | Ask explicitly: `/recall how did I rate-limit link creation in shortlinks, and why?` |
 | `swarm-kg` tools are denied or missing | `/mcp` and approve the server, or ask with `/recall …`, whose skill pre-approves the three tools |
 | Live notes never arrived (Ollama down, runs failing) | Ask the **fallback question**, answered from the seed alone: `Before I add rate limiting to POST /notes here: how have I rate-limited APIs in my other projects, and why that approach? Don't change any files yet.` Rehearsal: cites the billing-service token-bucket decision and the fixed-window learning, and the open shortlinks todo |
-| Injection adds nothing in step 4 | The service took over 1.5 s (cold embedding model) or nothing cleared 0.65: rerun the warm-up and ask again |
+| Injection adds nothing in step 4 | The agent searches instead and gives the same answer, so carry on. The causes: the service took over 1.5 s (cold embedding model), nothing cleared 0.65, or Claude Code cancelled the hook as timed out while the session was starting (seen once in three tries on a loaded machine, though the hook alone takes a quarter of a second). To show injection, rerun the warm-up, `/exit`, start `claude` again and ask again |
 | In step 4 the agent still searches | Fine: show the injected block with Ctrl+O; the answer is the same |
 | Anything else goes wrong | `demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"` and run the fallback question |
 
@@ -290,3 +290,21 @@ on port 5694:
 | 4. Session B, injection on | 08:25:06 | 34 s | Injected the shortlinks todo, the new decision memo and the new verify todo; no search, `get_note` on those; same correct, cited answer |
 
 Machine time from reset to the end of step 4: **4 min 25 s**, warm-up included.
+
+Again after search stopped waiting behind a run's indexing, headless, from
+`setup.sh` on port 5695, on a busy machine (load average 13 over five
+minutes). A probe ran the context-injection hook with the step 3 question once
+a second through steps 1 and 2:
+
+| Step | Started | Elapsed | Result |
+|------|---------|---------|--------|
+| Set-up, reset, injection off, warm-up | 16:34:22 | 7 s | 13 seed notes |
+| 1. Session A | 16:35:01 | 46 s | Limiter written; its test run denied (headless). Code captures took 58 s and 41 s, slowed by the probe and the load (32 s for one capture alone afterwards) |
+| 2. `/remember` | 16:35:56 | 159 s | 3 memos (decision, reverse-proxy todo, verify todo), each linked to the other two and both code notes; memo run 62 s. The command stopped waiting before the run finished, and the agent checked again with `--run`, as the skill says |
+| Probe, during steps 1 and 2 | 16:35:01 | 87 calls | Every call injected three notes; 632 ms median, 1.5 s at worst, node start-up included. Project A's new code note was among them from 16:36:43, while later runs were still queued |
+| 3. Session B, injection off | 16:39:04 | 32 s | `recall` skill, one search, `get_note` × 6; correct answer citing the new decision memo, both new code notes and both new todos |
+| 4. Session B, injection on | 16:39:45 | 46 s | Claude Code cancelled the hook as timed out after 12 s at session start, so nothing was injected; the agent searched instead and gave the same correct, cited answer |
+| 4, again | 16:41:38 | 33 s | Injected the shortlinks todo, the new decision memo and the new verify todo; no search, `get_note` on those; same answer |
+| 4, a third time | 16:42:29 | 30 s | Injected the same three notes; no search; same answer |
+
+Machine time from reset to the end of the first try at step 4: **6 min 9 s**.
