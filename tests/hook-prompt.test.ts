@@ -5,6 +5,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { spawn } from 'child_process';
 import * as http from 'http';
 import * as path from 'path';
+import { listen } from './helpers/mock-ollama';
 
 const HOOK = path.join(__dirname, '..', 'src', 'hook', 'prompt.ts');
 
@@ -87,8 +88,7 @@ describe('context-injection hook entrypoint', () => {
         }, delayMs);
       });
     });
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    url = `http://127.0.0.1:${await listen(server)}`;
   });
 
   afterAll(() => {
@@ -185,8 +185,7 @@ describe('context-injection hook entrypoint', () => {
 
   test('when the service is down it adds nothing and exits successfully, straight away', async () => {
     const closed = http.createServer();
-    await new Promise<void>(resolve => closed.listen(0, '127.0.0.1', resolve));
-    const port = (closed.address() as { port: number }).port;
+    const port = await listen(closed);
     await new Promise<void>(resolve => closed.close(() => resolve()));
 
     const result = await runHook(prompt('How does the vault work?'), {

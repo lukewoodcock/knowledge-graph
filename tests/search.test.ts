@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import request from 'supertest';
+import request from './helpers/http';
 import { Express } from 'express';
 import { createApp } from '../src/server';
 import { Config, loadConfig } from '../src/config';
@@ -355,9 +355,8 @@ describe('search over the embedding index (end-to-end)', () => {
 
     test('the reindex command asks the running service to rebuild its index', async () => {
       await writeVaultNote('code/a.md', plainNote('A', ['## Notes', 'docker']));
-      const server = createApp(cfg).listen(0, '127.0.0.1');
-      await new Promise(resolve => server.once('listening', resolve));
-      const port = (server.address() as { port: number }).port;
+      const server = http.createServer(createApp(cfg));
+      const port = await listen(server);
       const lines: string[] = [];
 
       try {

@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import request from 'supertest';
+import request from './helpers/http';
 import { createApp, startServer } from '../src/server';
 import { Config, loadConfig } from '../src/config';
 import {
@@ -315,8 +315,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
         );
       });
     });
-    await new Promise<void>(resolve => flaky.listen(0, resolve));
-    const flakyPort = (flaky.address() as { port: number }).port;
+    const flakyPort = await listen(flaky);
 
     try {
       const res = await triggerAndWait(
