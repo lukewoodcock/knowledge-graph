@@ -58,6 +58,54 @@ type Run = { status: 'running'; run_id: string } | (RunResult & { run_id: string
 // Runs are kept in memory only; enough to poll a recent capture.
 const MAX_RUNS = 100;
 
+/** How a run's notes were linked and indexed, and so how the run finished. */
+interface RunTail {
+  status: 'complete' | 'partial';
+  linker: { status: string; links_written: number };
+  /** What failed, for the result's `errors`; empty when the run is complete. */
+  errors: string[];
+}
+
+/**
+ * What every run does once its notes are written: the Linker adds
+ * similarity links, then the notes are indexed. A failure in either leaves
+ * the notes written, and makes the run partial rather than an error.
+ * `errors` holds what already failed in the run.
+ */
+async function linkAndIndex(
+  notes: WrittenNote[],
+  about: { language: string; description: string },
+  errors: string[],
+  cfg: Config,
+  index: EmbeddingIndex,
+): Promise<RunTail> {
+  let linker: RunTail['linker'];
+  try {
+    const result = await runLinker({ notes, ...about, cfg, index });
+    linker = { status: result.status, links_written: result.linksWritten };
+  } catch (err) {
+    errors.push(`linker: ${String(err)}`);
+    linker = { status: 'error', links_written: 0 };
+  }
+
+  // After the Linker, so the indexed content is the note as finally
+  // written (the Linker searches with the note's text, so it doesn't need
+  // the note indexed first). A note that fails to index is still in the
+  // vault, and the next startup sync picks it up.
+  try {
+    await index.indexNotes(notes.map(n => n.notePath));
+  } catch (err) {
+    errors.push(`index: ${String(err)}`);
+  }
+
+  return { status: errors.length === 0 ? 'complete' : 'partial', linker, errors };
+}
+
+/** `errors` for a run's result, left out when nothing failed. */
+function errorsField(errors: string[]): { errors?: string[] } {
+  return errors.length > 0 ? { errors } : {};
+}
+
 async function runCodeCapture(ctx: CodeCapture, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
   try {
     await writeSessionLog(ctx.today, [
@@ -82,26 +130,16 @@ async function runCodeCapture(ctx: CodeCapture, cfg: Config, index: EmbeddingInd
     });
     const notes = written.map(w => w.note);
 
-    const linker = await runLinker({ notes, language: ctx.language, description: ctx.description, cfg, index });
-
-    // After the Linker, so the indexed content is the note as finally
-    // written (the Linker searches with the note's text, so it doesn't need
-    // the note indexed first). A note that fails to index is still in the
-    // vault, and the next startup sync picks it up.
-    try {
-      await index.indexNotes(notes.map(n => n.notePath));
-    } catch (err) {
-      errors.push(`index: ${String(err)}`);
-    }
+    const tail = await linkAndIndex(notes, { language: ctx.language, description: ctx.description }, errors, cfg, index);
 
     return {
-      status: errors.length === 0 ? 'complete' : 'partial',
+      status: tail.status,
       session_date: ctx.today,
       file_path: ctx.filePath,
       language: ctx.language,
       notes: written.map(w => ({ agent: w.agent, note_path: w.note.notePath, title: w.note.title })),
-      linker: { status: linker.status, links_written: linker.linksWritten },
-      ...(errors.length > 0 ? { errors } : {}),
+      linker: tail.linker,
+      ...errorsField(tail.errors),
     };
   } catch (err) {
     return { status: 'error', error: String(err) };
@@ -113,36 +151,21 @@ async function runMemos(memos: Memo[], date: string, cfg: Config, index: Embeddi
   try {
     await writeSessionLog(date, memos.map(m => `- **Memo:** ${m.kind}: ${m.title}`), cfg);
     const written = await writeMemos(memos, date, cfg);
-    const errors: string[] = [];
 
     // The Linker adds similarity links on top of the session links. A
     // Linker failure leaves the memos written and linked to their session.
     const notes: WrittenNote[] = written.map(w => ({ type: 'memo', notePath: w.notePath, title: w.memo.title }));
     const description = memos.map(m => `${m.kind} memo: ${m.title}`).join('; ');
-    let linker: { status: string; links_written: number };
-    try {
-      const result = await runLinker({ notes, language: 'unknown', description, cfg, index });
-      linker = { status: result.status, links_written: result.linksWritten };
-    } catch (err) {
-      errors.push(`linker: ${String(err)}`);
-      linker = { status: 'error', links_written: 0 };
-    }
-
-    // After the Linker, so the memos are indexed as finally written.
-    try {
-      await index.indexNotes(written.map(w => w.notePath));
-    } catch (err) {
-      errors.push(`index: ${String(err)}`);
-    }
+    const tail = await linkAndIndex(notes, { language: 'unknown', description }, [], cfg, index);
 
     return {
-      status: errors.length === 0 ? 'complete' : 'partial',
+      status: tail.status,
       session_date: date,
       memos: await Promise.all(
         written.map(async w => ({ name: w.name, note_path: w.notePath, kind: w.memo.kind, links: await memoLinks(w) })),
       ),
-      linker,
-      ...(errors.length > 0 ? { errors } : {}),
+      linker: tail.linker,
+      ...errorsField(tail.errors),
     };
   } catch (err) {
     return { status: 'error', error: String(err) };

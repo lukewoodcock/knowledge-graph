@@ -114,7 +114,9 @@ Documenter's note and `notes` has one entry; the run is still `"complete"`.
 
 If one agent fails, the run degrades gracefully: `status` becomes `"partial"`,
 the surviving note is still written and linked, and an `errors` array explains
-what failed.
+what failed. The same goes for the Linker and indexing, as in a memo run: if
+either fails, the notes are still written and listed, and the run is
+`"partial"`, not an error.
 
 ### Send memos
 
