@@ -1,12 +1,15 @@
 // Pure pieces of the Stop hook: config, skip rules, and webhook payloads.
 import * as path from 'path';
 import { FileEdit, Turn, uniqueFiles } from './transcript';
+import { positiveInt } from '../env';
 
 /** The subset of the Stop hook stdin JSON we use. */
 export interface StopHookInput {
   session_id?: string;
   transcript_path?: string;
   cwd?: string;
+  /** The session's scratchpad (Claude Code 2.1.257+): temporary files, never project work. */
+  scratchpad_dir?: string;
   hook_event_name?: string;
   stop_hook_active?: boolean;
 }
@@ -17,6 +20,10 @@ export interface WebhookPayload {
   language: string;
   description: string;
   changed_code: string;
+  /** The Claude Code session the turn belongs to. */
+  session_id?: string;
+  /** The project the session works in (see projectName in io.ts). */
+  project?: string;
 }
 
 export interface HookConfig {
@@ -32,18 +39,13 @@ export interface HookConfig {
 
 export const DEFAULT_URL = 'http://localhost:5678/webhook/knowledge-graph/trigger';
 
-function int(v: string | undefined, fallback: number): number {
-  const n = parseInt(v ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
 export function loadHookConfig(env: NodeJS.ProcessEnv = process.env): HookConfig {
   return {
     url: env.SWARM_KG_URL || DEFAULT_URL,
     disabled: env.SWARM_KG_DISABLE === '1',
     vaultPath: env.SWARM_KG_VAULT_PATH || undefined,
-    timeoutMs: int(env.SWARM_KG_TIMEOUT_MS, 2000),
-    maxFiles: int(env.SWARM_KG_MAX_FILES, 5),
+    timeoutMs: positiveInt(env.SWARM_KG_TIMEOUT_MS, 2000),
+    maxFiles: positiveInt(env.SWARM_KG_MAX_FILES, 5),
     maxCodeChars: 4000,
     maxDescriptionChars: 1000,
     debug: env.SWARM_KG_DEBUG === '1',
@@ -95,37 +97,64 @@ export function truncate(text: string, max: number): string {
   return `${text.slice(0, max)}\n… [truncated ${text.length - max} chars]`;
 }
 
-/** Path relative to cwd when the file is inside it, so notes get readable titles. */
-export function displayPath(filePath: string, cwd?: string): string {
-  if (!cwd || !path.isAbsolute(filePath) || !isInside(filePath, cwd)) return filePath;
-  return path.relative(cwd, filePath);
+/** Path relative to the project when the file is inside it, so notes get readable titles. */
+export function displayPath(filePath: string, projectDir?: string): string {
+  if (!projectDir || !path.isAbsolute(filePath) || !isInside(filePath, projectDir)) return filePath;
+  return path.relative(projectDir, filePath);
+}
+
+/** Where the session works, which decides which edited files are code captures. */
+export interface CaptureScope {
+  /** The session's project root; files outside it are never captured. */
+  projectDir?: string;
+  /** The session's scratchpad (temporary files, such as /remember's memos file). */
+  scratchpadDir?: string;
 }
 
 /**
  * One payload per changed file (deduped, capped at cfg.maxFiles), all
- * sharing the turn's prompt as the description. `diffs` maps a file path to
- * its git diff; files without one fall back to the tool input's new text.
- * Files inside the vault are left out, like the cwd guard.
+ * sharing the turn's prompt as the description, each path relative to the
+ * project. `diffs` maps a file path to its git diff; files without one fall
+ * back to the tool input's new text. Only files inside the project become
+ * captures (see changedFiles). Each payload carries the session id and
+ * project when they're known.
  */
 export function buildPayloads(
   turn: Turn,
-  opts: { cwd?: string; diffs?: Map<string, string>; cfg: HookConfig },
+  opts: CaptureScope & {
+    diffs?: Map<string, string>;
+    cfg: HookConfig;
+    sessionId?: string;
+    project?: string;
+  },
 ): WebhookPayload[] {
-  const { cwd, diffs, cfg } = opts;
+  const { diffs, cfg, sessionId, project, projectDir } = opts;
   const description = truncate(turn.prompt, cfg.maxDescriptionChars);
 
-  return changedFiles(turn, cfg)
+  return changedFiles(turn, cfg, opts)
     .map((e: FileEdit) => ({
-      file_path: displayPath(e.filePath, cwd),
+      file_path: displayPath(e.filePath, projectDir),
       language: languageFromPath(e.filePath),
       description,
       changed_code: truncate(diffs?.get(e.filePath) || e.content, cfg.maxCodeChars),
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(project ? { project } : {}),
     }));
 }
 
-/** The files a turn changed that we'd report on, before any diffs are fetched. */
-export function changedFiles(turn: Turn, cfg: HookConfig): FileEdit[] {
+/**
+ * The files a turn changed that we'd report on, before any diffs are fetched.
+ * Only files inside the session's project count: Claude also edits files
+ * elsewhere, such as its own memory files under ~/.claude/projects/, and
+ * those aren't the project's code. Files in the vault or the session's
+ * scratchpad are left out too: the scratchpad holds temporary files, such as
+ * the memos file the /remember skill writes there before sending it.
+ */
+export function changedFiles(turn: Turn, cfg: HookConfig, scope: CaptureScope = {}): FileEdit[] {
+  const { projectDir, scratchpadDir } = scope;
   return uniqueFiles(turn.edits)
+    .filter(e => !projectDir || isInside(e.filePath, projectDir))
     .filter(e => !(cfg.vaultPath && isInside(e.filePath, cfg.vaultPath)))
+    .filter(e => !(scratchpadDir && isInside(e.filePath, scratchpadDir)))
     .slice(0, cfg.maxFiles);
 }

@@ -2,28 +2,62 @@
 
 A local AI agent swarm that builds a personal knowledge graph in your
 **Obsidian** vault, powered by **Ollama** (local LLMs). POST your working
-context from the IDE and three agents run automatically:
+context from the IDE and the agents run automatically:
 
 - **Documenter** — summarises what you're building into a structured note (`vault/code/`)
-- **Researcher** — generates a best-practices/pitfalls note (`vault/research/`)
-- **Linker** — connects new notes to existing ones with `[[wikilinks]]`
+- **Researcher** — generates a best-practices/pitfalls note (`vault/research/`).
+  Off by default; set `RESEARCHER_ENABLED=true` to turn it on
+- **Linker** — connects new notes to existing ones with `[[wikilinks]]`,
+  choosing from the ten notes most similar to each new note
 
 This is a TypeScript service — a migration of the original
 [n8n-based implementation](https://github.com/lukewoodcock/utils) into plain
 code for easier review, testing, and collaboration. **The webhook contract is
 unchanged**: existing IDE integrations and curl commands work as-is.
 
-```
-IDE ──POST /webhook/knowledge-graph/trigger──►  swarm-kg service
-                                                     │
-                                          ┌──────────┴──────────┐
-                                          ▼                     ▼   (parallel)
-                                     Documenter            Researcher
-                                          └──────────┬──────────┘
-                                                     ▼
-                                                  Linker
-                                                     │
-                                              Obsidian Vault
+For the whole loop on one page (capture, run, vault and recall, the trade-offs
+and the safety decisions), see [docs/architecture.md](docs/architecture.md).
+
+Session A writes to the graph and session B recalls from it:
+
+```mermaid
+flowchart LR
+  subgraph A["Session A, project A"]
+    CH["Capture hook<br/>Stop, async"]
+    RM["/remember skill<br/>the session's agent<br/>writes memos"]
+  end
+
+  subgraph W["swarm-kg service, 127.0.0.1 only: runs"]
+    Q["Capture queue<br/>one run at a time"]
+    DOC["Documenter"]
+    RES["Researcher<br/>off by default"]
+    LNK["Linker"]
+  end
+
+  subgraph V["Vault: markdown, open in Obsidian"]
+    N["Notes and links"]
+    I[".swarm-kg/index.json"]
+  end
+
+  subgraph R["swarm-kg service: read API"]
+    API["search, note, related"]
+  end
+
+  subgraph B["Session B, project B"]
+    MCP["MCP server, stdio<br/>guided by /recall"]
+    CI["Context-injection hook<br/>UserPromptSubmit, sync"]
+  end
+
+  CH -- "code captures" --> Q
+  RM -- "memos" --> Q
+  Q -- "code capture" --> DOC & RES
+  Q -- "memo" --> LNK
+  DOC & RES --> LNK
+  LNK -- "write" --> N
+  N -- "index after the run" --> I
+  I & N --> API
+  API -- "tool calls" --> MCP
+  API -- "best notes,<br/>every prompt" --> CI
 ```
 
 ## Quick start
@@ -32,9 +66,22 @@ IDE ──POST /webhook/knowledge-graph/trigger──►  swarm-kg service
 cp .env.example .env        # set VAULT_HOST_PATH to your vault
 docker compose up -d --build
 docker exec -it ollama ollama pull qwen3.5:9b
+docker exec -it ollama ollama pull bge-large   # embeddings for search
 ```
 
-Podman on macOS works identically: `podman compose up -d --build`.
+Podman on macOS works identically: `podman compose up -d --build`. Compose
+publishes both the service (5678) and Ollama (11434) on the host's loopback
+only.
+
+Without compose, publish the image's port on loopback too: the image listens
+on every interface inside the container (`HOST=0.0.0.0`), so the `-p` address
+is what keeps it private.
+
+```bash
+docker build -t swarm-kg .
+docker run -d -p 127.0.0.1:5678:5678 -v /path/to/vault:/vault \
+  -e OLLAMA_URL=http://host.docker.internal:11434 swarm-kg
+```
 
 ### Trigger from the IDE
 
@@ -50,7 +97,15 @@ curl -s -X POST http://localhost:5678/webhook/knowledge-graph/trigger \
 ```
 
 Payload: at least one of `file_path` / `description` is required; `language`
-and `changed_code` are optional.
+and `changed_code` are optional. So are `session_id` (the Claude Code session)
+and `project` (the codebase, named after its git repository): when sent, they
+are recorded as `session` and `project` in the frontmatter of every note the
+run writes, and when left out those fields are simply absent.
+
+The Documenter's note is `code/<date>_<project>_<file path>.md` (for example
+`code/2026-06-10_project-a_src_auth_jwt.py.md`), so two projects changing a
+file of the same name on the same day get a note each. Without a `project`
+the name is just `<date>_<file path>`, as in the reply below.
 
 The service replies `202 Accepted` straight away and the agents run in the
 background:
@@ -83,9 +138,351 @@ curl -s http://localhost:5678/webhook/knowledge-graph/runs/3f2c… | jq .
 
 Run status is kept in memory (last 100 runs), so it's lost on restart.
 
+Captures go through one in-process queue and run one at a time, in the order
+they arrived, so several runs never compete for one local Ollama. A queued
+run reports `"running"` until it has finished. The service's console logs one
+line per finished run, with its id, status and how long the run took:
+
+```
+run 3f2c… complete in 23.4s (src/auth/jwt.py)
+```
+
+With the Researcher off (the default), a code capture writes only the
+Documenter's note and `notes` has one entry; the run is still `"complete"`.
+
 If one agent fails, the run degrades gracefully: `status` becomes `"partial"`,
 the surviving note is still written and linked, and an `errors` array explains
-what failed.
+what failed. The same goes for the Linker and indexing, as in a memo run: if
+either fails, the notes are still written and listed, and the run is
+`"partial"`, not an error.
+
+### Send memos
+
+A memo is a capture the agent in your session already wrote: a `learning`,
+`decision`, `todo`, `snippet` or `conversation`. Memos skip the Documenter and
+Researcher. Send one memo, a JSON array of them, or `{"memos": [...]}` (at
+most 20):
+
+```bash
+curl -s -X POST http://localhost:5678/webhook/knowledge-graph/memo \
+  -H "Content-Type: application/json" \
+  -d '{
+    "memos": [{
+      "kind":       "decision",
+      "title":      "Use write-through caching",
+      "body":       "In project-a we chose write-through caching because…",
+      "project":    "project-a",
+      "session_id": "5d1e…",
+      "files":      ["src/cache.ts"]
+    }]
+  }' | jq .
+```
+
+`kind`, `title`, `body`, `project` and `session_id` are required, `files` is
+an optional list of paths. An invalid memo rejects the whole request with
+`400` and an `error` naming each bad field (`memos[1].kind must be one of: …`).
+Otherwise the reply is `202` with a run id and status URL, exactly like a code
+capture, and the run joins the same queue.
+
+The run writes each memo to `vault/memos/<date>_<title>.md` with `kind`,
+`project` and `session` (and `files`) in its frontmatter; todos also get
+`status: open`. The service links each memo, under `## Same Session`, to every
+note the code captures of its session wrote and to the other memos of its
+session sent in the same request (never to notes from other sessions, nor to
+memos from earlier requests). The Linker then adds its similarity links under
+`## Related Notes`, never repeating a note the memo already links to, and the
+memos are indexed. The finished run lists
+each memo with all its links, each named once:
+
+```json
+{
+  "run_id": "9a1b…",
+  "status": "complete",
+  "session_date": "2026-06-10",
+  "memos": [
+    {
+      "name": "2026-06-10_Use_write-through_caching",
+      "note_path": "/vault/memos/2026-06-10_Use_write-through_caching.md",
+      "kind": "decision",
+      "links": ["2026-06-10_project-a_src_cache.ts", "2026-06-02_redis-notes"]
+    }
+  ],
+  "linker": { "status": "success", "links_written": 1 }
+}
+```
+
+If the Linker or indexing fails, the memos are still written with their
+session links, `status` is `"partial"` and `errors` says what failed.
+
+### Save memos from Claude Code (/remember)
+
+The `/remember` skill has the agent in your session write the memos, so they
+carry the reasoning from the conversation rather than just the diff. With no
+argument it captures everything worth keeping since the last memo, one memo
+per distinct thing (a decision and a todo are two memos); with an argument,
+`/remember the deploy script`, just that. The agent picks each memo's kind,
+opens each memo with a paragraph of context (project, problem, files) so it
+reads on its own months later, keeps ADRs and scripts in full, and leaves out
+credentials, tokens and personal data. Then it tells you each memo's name and
+links.
+
+Wire it into a project by copying
+[`examples/skills/remember/`](examples/skills/remember/SKILL.md) into its
+`.claude/skills/` and replacing the `/ABSOLUTE/PATH/TO` placeholders (see
+[`examples/README.md`](examples/README.md#remember)).
+
+The skill hands the memos to `dist/remember.js`, which sends them to the memo
+endpoint, polls the run, and prints what was saved:
+
+```bash
+node dist/remember.js --session <session id> --project-dir <project root> < memos.json
+```
+
+```
+Saved 2 memo(s) to the graph for project url-shortener, session 2d27…:
+- 2026-10-26_URL_shortener_short_codes_are_the_base62_encoding_of_an_auto (decision)
+  links: [[2026-10-26_url-shortener_src_shorten.js]]
+- 2026-10-26_Add_rate_limiting_to_the_URL_shortener_create-link_endpoint_ (todo)
+  links: [[2026-10-26_url-shortener_src_shorten.js]]
+```
+
+- **Input**: on stdin, one memo, a JSON array of them, or `{"memos": [...]}`,
+  each `{kind, title, body, files?}`. The command stamps every memo with the
+  session id (the skill passes Claude Code's `${CLAUDE_SESSION_ID}`) and the
+  project, named from `--project-dir` (the skill passes `${CLAUDE_PROJECT_DIR}`)
+  exactly as the capture hook names it, so memos link to the session's code
+  captures.
+- **Exit code**: `0` saved (a partial run still lists its memos, then what
+  failed); `1` nothing saved, with the reason (a rejected field, the service
+  not running, bad JSON, no session id); `2` accepted but still queued when
+  the wait ran out, with the `--run <run_id>` command that picks it up again.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SWARM_KG_SERVICE_URL` | `http://127.0.0.1:5678` | The service |
+| `SWARM_KG_REMEMBER_WAIT_MS` | `100000` | How long to wait for the run before exiting with `2`; under the Bash tool's two-minute default timeout |
+
+Why a file rather than a heredoc: Claude Code's Bash check refuses, before any
+allow rule applies, a command whose text holds a brace followed by a quote
+("Contains brace with quote character"). Memo JSON always does, and so does
+most code a snippet memo keeps. A heredoc without braces is approved by the
+skill's `allowed-tools: Bash(node …/dist/remember.js *)`, and so is the `<`
+redirect from a file, so the skill has the agent write the memos with the
+Write tool to its scratchpad (no approval needed there) and redirect that file
+in. The capture hook skips files in the session's scratchpad, so the memos
+file never becomes a code capture.
+
+If you run Claude Code with the Bash sandbox, its commands can't reach a
+server on localhost by default; on macOS allow it with
+`sandbox.network.allowLocalBinding: true`.
+
+### Who can reach the service
+
+There is no authentication, so the service listens on the loopback interface
+(`127.0.0.1`) by default: only your own machine can send captures or read
+notes. `HOST` changes the bind address. The Docker image sets `HOST=0.0.0.0`
+inside the container so a published port can reach the service, so publish it
+on the host's loopback only: `docker compose` does (`127.0.0.1:5678`, and
+`127.0.0.1:11434` for Ollama), and with `docker run` use
+`-p 127.0.0.1:5678:5678`, never a bare `-p 5678:5678`.
+
+### Search the graph
+
+Every note is embedded with a local Ollama embedding model (`bge-large` by
+default, set with `OLLAMA_EMBED_MODEL`) as soon as a run writes it, so a run's
+notes are searchable by the time the run finishes. Each `##` section is
+embedded on its own, with the note's title, type, kind (for a memo), project
+and a one-line summary in front of it, so a section like "Key Points" still matches questions
+about the note's topic. A section too long for the model (over about 1500
+characters) is split at paragraph breaks into chunks that keep its heading.
+
+```bash
+curl -s -X POST http://localhost:5678/webhook/knowledge-graph/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "how did I refresh JWTs?", "limit": 5}' | jq .
+```
+
+```json
+{
+  "query": "how did I refresh JWTs?",
+  "results": [
+    {
+      "name": "2026-06-10_project-a_src_auth_jwt.py",
+      "path": "code/2026-06-10_project-a_src_auth_jwt.py.md",
+      "type": "code",
+      "kind": null,
+      "status": null,
+      "project": "project-a",
+      "snippet": "## Summary\nImplements JWT refresh with a sliding expiry window…",
+      "score": 0.81
+    }
+  ]
+}
+```
+
+`query` is required; `limit` is optional (5 by default, at most 50). A note's
+score is the cosine similarity of its best-matching section, which is also its
+snippet. `type` is the note's type from its frontmatter (`code`, `memo`, or
+whatever another source writes), `kind` a memo's kind (`learning`, `decision`,
+`todo`, `snippet`, `conversation`; `null` for every other note) and `status`
+the note's status (a todo's is `open` until you change it in Obsidian; `null`
+when the note has none). Research notes (`type: research`, wherever they live)
+and session logs are never returned.
+
+Optional `type`, `kind` and `status` in the request narrow the results to
+notes with that value, so `{"query": "what's left to do?", "kind": "todo",
+"status": "open"}` recalls open todos. A todo closed in Obsidian drops out of
+that search once the index picks up the edit (on the next start, or
+`npm run reindex`).
+
+The Linker uses the same search to pick link candidates: each new note's title
+and body are the query, and the ten best hits (never the note itself, nor a
+note it already links to, such as a memo's Same Session notes) are the only
+notes the model may link it to. Links to anything else are dropped, and
+with nothing to link to the model isn't asked at all. The new note doesn't
+need to be indexed for this, so a run indexes its notes once, after the
+Linker. Since research notes are never search hits, they aren't link
+candidates either.
+
+The vectors live in `.swarm-kg/index.json` inside the vault (Obsidian hides
+dot folders), with a content hash per note. The notes stay the only source of
+truth: on startup the service indexes notes that are missing or changed (seed
+notes, notes you wrote or edited in Obsidian) and drops notes that were
+deleted, and the index can be deleted at any time. To rebuild it from scratch
+while the service runs:
+
+```bash
+npm run build && npm run reindex   # POSTs /webhook/knowledge-graph/reindex
+```
+
+`npm run reindex` talks to `SWARM_KG_SERVICE_URL` (default
+`http://127.0.0.1:5678`). With the service stopped, delete `.swarm-kg/` and
+start it instead. Changing `OLLAMA_EMBED_MODEL` re-embeds every note on the
+next start.
+
+### Open a note and walk its links
+
+A note's name is its file name without `.md`, as a `[[wikilink]]` names it
+and as search returns it.
+
+```bash
+curl -s http://localhost:5678/webhook/knowledge-graph/notes/cache-decision | jq .
+```
+
+```json
+{
+  "name": "cache-decision",
+  "path": "memos/cache-decision.md",
+  "frontmatter": { "title": "Cache invalidation decision", "kind": "decision", "project": "project-b" },
+  "content": "## Summary\nWe chose write-through caching."
+}
+```
+
+`content` is the note's markdown after its frontmatter, up to
+`NOTE_MAX_CHARS` characters (20,000 by default), so a huge note can't flood an
+agent's context. A longer note is cut there and ends with a marker,
+`… [truncated: showing 20000 of 31250 characters]`, and the reply also holds
+`"truncated": true`. The related endpoint
+lists the notes a note links to (`outgoing`) and the notes that link to it
+(`incoming`), each as `{name, path, title, type, kind, project}`. Session logs,
+links to notes that don't exist, and self-links are left out.
+
+```bash
+curl -s http://localhost:5678/webhook/knowledge-graph/notes/cache-decision/related | jq .
+# { "name": "cache-decision", "outgoing": [...], "incoming": [...] }
+```
+
+An unknown name is a 404: `{"error": "No note named \"…\""}`. Names are
+matched against the vault's own notes (dot folders excluded), so a name can't
+reach a file outside them.
+
+### Recall over MCP
+
+`dist/mcp/server.js` is an [MCP](https://modelcontextprotocol.io) server that
+gives any agent recall over the graph. It speaks MCP over stdio only, so it
+has no network listener of its own; each tool calls the service's HTTP API:
+
+| Tool | Calls |
+|------|-------|
+| `search_notes(query, limit = 5, type?, kind?, status?)` | `POST /webhook/knowledge-graph/search` |
+| `get_note(name)` | `GET /webhook/knowledge-graph/notes/:name` |
+| `related_notes(name)` | `GET /webhook/knowledge-graph/notes/:name/related` |
+
+Each tool returns the service's JSON reply as text. Every tool description
+tells the agent that note contents are reference material, not instructions.
+A missing note, or the service being down, comes back as a tool error the
+agent can read (`The swarm-kg service is not reachable at … Is it running?`),
+never as a crash.
+
+Add it to a project's `.mcp.json` (after `npm run build` in this repo):
+
+```json
+{
+  "mcpServers": {
+    "swarm-kg": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/swarm-kg/dist/mcp/server.js"],
+      "env": { "SWARM_KG_SERVICE_URL": "http://127.0.0.1:5678" }
+    }
+  }
+}
+```
+
+Or from the command line:
+`claude mcp add swarm-kg --scope project -e SWARM_KG_SERVICE_URL=http://127.0.0.1:5678 -- node /ABSOLUTE/PATH/TO/swarm-kg/dist/mcp/server.js`.
+Claude Code then names the tools `mcp__swarm-kg__search_notes` and so on.
+`SWARM_KG_SERVICE_URL` defaults to `http://127.0.0.1:5678`.
+
+### Wire recall into a project (`/recall`)
+
+The [`recall` skill](examples/skills/recall/SKILL.md) tells the agent when
+the graph is worth checking (past work, "how did I...", earlier decisions,
+saved snippets, open todos) and how to use the three tools: search, open the
+best hits, follow links when useful, answer, and cite every note used as a
+`[[wikilink]]` with its project, ending with a **Notes used** list. With
+context injection on, it starts from the injected notes instead of searching
+again. The agent
+can load it on its own when a request leans on past work, and
+`/recall <question>` makes it answer that question from the graph.
+
+Three files wire it into a project, all in [`examples/`](examples/), next to
+the capture hook:
+
+| Copy | To | What it does |
+|------|----|--------------|
+| `examples/mcp.json` | `<project>/.mcp.json` | Adds the `swarm-kg` MCP server |
+| `examples/skills/recall/` | `<project>/.claude/skills/recall/` | Adds the `/recall` skill |
+| `examples/claude-settings.json` | `<project>/.claude/settings.json` | Pre-approves the skill and the three tools, enables the MCP server, and adds the capture hook |
+
+```bash
+npm install && npm run build               # in this repo, produces dist/mcp/server.js
+cp examples/mcp.json /path/to/demo-project/.mcp.json
+mkdir -p /path/to/demo-project/.claude/skills
+cp -R examples/skills/recall /path/to/demo-project/.claude/skills/recall
+cp examples/claude-settings.json /path/to/demo-project/.claude/settings.json
+# then replace the /ABSOLUTE/PATH/TO placeholders in .mcp.json and settings.json
+```
+
+Merge the entries into existing files instead of overwriting them. A
+symlinked skill folder (`ln -s "$PWD/examples/skills/recall" …/.claude/skills/recall`)
+keeps every project on this repo's copy. The service must be running; if it
+isn't, the tools say so and `/recall` tells you to start it.
+
+Open the project once in an interactive Claude Code session and accept the
+trust dialog and the `swarm-kg` server prompt. Until a folder is trusted,
+Claude Code ignores the `permissions.allow` and `enabledMcpjsonServers`
+entries of its committed `.claude/settings.json`. Headless runs
+(`claude -p`) load the project's skill and MCP server without asking, and
+`/recall` works there anyway because the skill's own `allowed-tools`
+pre-approves the three tools. Recall the agent starts on its own, though, is
+denied in an untrusted folder until you pass
+`--allowedTools "Skill(recall)"`:
+
+```bash
+cd /path/to/demo-project
+claude -p "/recall why did we pick a token bucket for rate limiting?" --output-format json
+claude -p "How did I back up Postgres before?" --allowedTools "Skill(recall)"
+```
 
 ### Trigger from Claude Code (Stop hook)
 
@@ -93,16 +490,32 @@ what failed.
 [Stop hook](https://code.claude.com/docs/en/hooks#stop): at the end of each
 Claude turn it reads the session transcript, finds the files Claude changed
 since your last prompt (Edit / Write / MultiEdit / NotebookEdit calls that
-succeeded), and POSTs **one trigger per changed file** to the webhook. Each
+succeeded), and POSTs **one trigger per changed file** to the webhook. When
+the turn also ran a shell command (Claude may edit with a script or `sed`,
+as it often does in auto mode), the files git reports as changed or new that
+were modified after your prompt count too; git-ignored files never do. In a
+turn with no shell command, files changed meanwhile in your editor are left
+out, but in one with a command they can't be told apart and are captured. Each
 one has your prompt as `description`, `language` from the file extension,
 and `changed_code` from `git diff HEAD -- <file>`, or from the tool input when
-the file isn't tracked; both are capped at 4 KB. A turn with no edits sends nothing.
+the file isn't tracked; both are capped at 4 KB. Every one also carries the
+`session_id` Claude Code gave the hook and the `project`: the name of the git
+repository the session's project directory is in (the main repository's name
+inside a linked worktree), or that folder's name outside one. The project
+directory is `CLAUDE_PROJECT_DIR`, which Claude Code sets to where the session
+started, or the hook input's `cwd` without it; the project root is the top of
+its git repository, or the directory itself outside one. Only files inside the
+project root are captured: Claude also edits files elsewhere, such as its own
+memory files under `~/.claude/projects/`, and those are not the project's
+code. A turn with no edits to project files sends nothing.
 
 It never gets in Claude's way: nothing on stdout, always exit 0, a 2s
 timeout per POST and a 5s hard deadline. It does nothing when
 `stop_hook_active` is true, when `SWARM_KG_DISABLE=1`, or when the session's
 `cwd` is inside `SWARM_KG_VAULT_PATH`, so Claude editing the vault can't
-feed the graph its own notes.
+feed the graph its own notes. Files inside the vault or the session's
+scratchpad (`scratchpad_dir` in the hook input) are never sent: the scratchpad
+holds temporary files, such as the memos file `/remember` writes.
 
 Wire it into a demo project:
 
@@ -115,7 +528,7 @@ cp examples/claude-settings.json /path/to/demo-project/.claude/settings.json
 
 If the demo project already has a `.claude/settings.json`, merge the
 `hooks.Stop` entry from [`examples/claude-settings.json`](examples/claude-settings.json)
-into it instead. `async: true` means Claude doesn't wait for the hook at all.
+into it instead (the file's other entries are for recall, above). `async: true` means Claude doesn't wait for the hook at all.
 Check it's loaded with `/hooks` in Claude Code.
 
 Try it by hand without Claude:
@@ -136,13 +549,48 @@ echo '{"hook_event_name":"Stop","stop_hook_active":false,
 | `SWARM_KG_TIMEOUT_MS` | `2000` | Per-POST timeout |
 | `SWARM_KG_DEBUG` | unset | `1` logs what it did to stderr |
 
+### Context injection (UserPromptSubmit hook)
+
+`dist/hook/prompt.js` is a Claude Code
+[UserPromptSubmit hook](https://code.claude.com/docs/en/hooks#userpromptsubmit)
+that does recall automatically: it searches the graph with each prompt and, when
+notes clear a relevance threshold (0.6 by default), adds the best three as
+additional context in a block marking them as reference notes, not
+instructions, capped at 4,000 characters. It's off unless a project adds its
+entry, from
+[`examples/claude-settings.context-injection.json`](examples/claude-settings.context-injection.json),
+to its `.claude/settings.json`. If the service is down or takes longer than
+1.5 s it adds nothing and the prompt goes through unchanged; it always exits 0.
+
+[`examples/README.md`](examples/README.md) has the pros and cons of turning it
+on, and its settings. Try it by hand with the service running:
+
+```bash
+echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed one at a time?"}' \
+  | SWARM_KG_DEBUG=1 node dist/hook/prompt.js
+```
+
+## Demo
+
+[`demo/`](demo/) holds everything for the live demo: a seed vault, a set-up
+script that creates two throwaway projects wired with the config above, a
+reset script, a context-injection toggle, and
+[`demo/SCRIPT.md`](demo/SCRIPT.md) with every step, prompt, timing and
+fallback.
+
+```bash
+demo/setup.sh ~/swarm-kg-demo && source ~/swarm-kg-demo/demo.env
+demo/service.sh "$DEMO_VAULT"                                # in its own terminal
+demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"    # before each run
+```
+
 ## Development
 
 ```bash
 npm install
 npm run dev          # hot-reload dev server (tsx watch)
 npm run typecheck    # tsc --noEmit
-npm test             # vitest — 73 tests, <1s, no Docker needed
+npm test             # vitest — 203 tests, a few seconds, no Docker needed
 npm run build        # compile to dist/
 ```
 
@@ -153,17 +601,29 @@ src/
 ├── index.ts            # entrypoint
 ├── server.ts           # Express app: webhook + orchestration (replaces n8n Orchestrator)
 ├── config.ts           # env var loading
-├── ollama.ts           # /api/chat client + response parsing
-├── vault.ts            # safeTitle, frontmatter, file helpers
+├── env.ts              # settings helpers shared with the clients: service URL, whole numbers
+├── ollama.ts           # /api/chat and /api/embed clients + response parsing
+├── embedding-index.ts  # notes embedded by section, the index file, search
+├── requests.ts         # pure validation of memo and search request bodies
+├── memos.ts            # memo notes and their same-session links
+├── reindex.ts          # npm run reindex: asks the service to rebuild the index
+├── remember.ts         # dist/remember.js: what /remember runs to send memos and report them
+├── vault.ts            # frontmatter parsing and writing, file helpers
+├── vault-format.ts     # what writers and readers agree on: folders, note names, link sections, wikilinks
+├── graph.ts            # one note by name, and the notes linked to and from it
 ├── agents/
 │   ├── documenter.ts
 │   ├── researcher.ts
 │   └── linker.ts
-└── hook/               # Claude Code Stop hook (dist/hook/stop.js)
-    ├── stop.ts         # entrypoint: stdin → transcript → POSTs
-    ├── transcript.ts   # pure: last turn's prompt + edits from the JSONL
-    ├── payload.ts      # pure: config, skip rules, webhook payloads
-    └── io.ts           # stdin, git diff, fetch (never throw)
+├── hook/               # Claude Code hooks (dist/hook/stop.js, dist/hook/prompt.js)
+│   ├── stop.ts         # entrypoint: stdin → transcript → POSTs
+│   ├── transcript.ts   # pure: last turn's prompt + edits from the JSONL
+│   ├── payload.ts      # pure: config, skip rules, webhook payloads
+│   ├── io.ts           # stdin, git diff, fetch (never throw)
+│   ├── prompt.ts       # UserPromptSubmit entrypoint: stdin → search → additionalContext
+│   └── injection.ts    # pure: config, skip rules, the reference-notes block
+└── mcp/
+    └── server.ts       # stdio MCP server for recall (dist/mcp/server.js)
 tests/                  # vitest unit + in-process end-to-end tests
 ```
 
@@ -182,7 +642,11 @@ runs typecheck, tests, and a production build on every PR.
 | `VAULT_PATH` | `/vault` | Vault path inside the container |
 | `OLLAMA_URL` | `http://ollama:11434` | Ollama API base URL |
 | `OLLAMA_MODEL` | `qwen3.5:9b` | Model for all agents (`qwen2.5-coder:7b`, `llama3.2`, ...) |
+| `OLLAMA_EMBED_MODEL` | `bge-large` | Ollama embedding model for search. Changing it re-embeds every note |
 | `OLLAMA_THINK` | `false` | Let thinking models reason first. ~20x slower on a 9B model |
+| `RESEARCHER_ENABLED` | `false` | `true` also writes a research note for every code capture |
+| `NOTE_MAX_CHARS` | `20000` | Most characters of a note's text the note endpoint (and `get_note`) returns; longer notes are cut with a marker |
+| `HOST` | `127.0.0.1` | Address the service listens on (the Docker image sets `0.0.0.0` inside the container; publish it on loopback) |
 | `PORT` | `5678` | Webhook service port |
 
 ## Changes from the n8n version
@@ -194,6 +658,7 @@ Behaviour-preserving migration, with a few deliberate fixes:
 - **Partial failure handling** — one agent failing no longer aborts the run
   (`Promise.allSettled`).
 - **Linker path safety** — the linker only writes to notes it just created,
-  so a hallucinated path from the LLM can never touch other files.
+  so a hallucinated path from the LLM can never touch other files, and only
+  links to its candidates, so it never writes a link to a note that doesn't exist.
 - **No URL string-replace hack** — agents are function calls, not HTTP
   round-trips through the workflow engine.

@@ -1,36 +1,37 @@
 import express, { Express } from 'express';
-import * as path from 'path';
+import * as http from 'http';
 import { randomUUID } from 'crypto';
 import { Config } from './config';
-import { SwarmContext, NoteResult } from './types';
+import { CodeCapture, WrittenNote, RunStatus } from './types';
 import { today, appendNote } from './vault';
+import { notePath, sessionLogName } from './vault-format';
 import { runDocumenter } from './agents/documenter';
 import { runResearcher } from './agents/researcher';
 import { runLinker } from './agents/linker';
+import { readNote, relatedNotes } from './graph';
+import { createEmbeddingIndex, EmbeddingIndex } from './embedding-index';
+import { memoLinks, writeMemos } from './memos';
+import { Memo, parseMemos, parseSearch, trimmedString } from './requests';
 
 interface WebhookPayload {
   file_path?: string;
   language?: string;
   description?: string;
   changed_code?: string;
+  session_id?: string;
+  project?: string;
 }
 
-async function writeSessionLog(ctx: SwarmContext, cfg: Config): Promise<void> {
-  const logFile = path.join(cfg.vaultPath, 'logs', `${ctx.today}_session_log.md`);
-  const entry = [
-    `## ${new Date().toISOString()}`,
-    '',
-    `- **File:** ${ctx.filePath}`,
-    `- **Language:** ${ctx.language}`,
-    `- **Description:** ${ctx.description}`,
-    '',
-  ].join('\n');
+/** Appends one capture's entry (its `- **Field:** value` lines) to the day's session log. */
+async function writeSessionLog(date: string, lines: string[], cfg: Config): Promise<void> {
+  const logFile = notePath(cfg.vaultPath, 'logs', sessionLogName(date));
+  const entry = [`## ${new Date().toISOString()}`, '', ...lines, ''].join('\n');
 
   // First entry of the day gets frontmatter; later entries append below it.
   const header = [
     '---',
-    `title: "Session Log ${ctx.today}"`,
-    `date: ${ctx.today}`,
+    `title: "Session Log ${date}"`,
+    `date: ${date}`,
     'tags: [log, session]',
     'related: []',
     'source: "orchestrator"',
@@ -49,42 +50,122 @@ async function writeSessionLog(ctx: SwarmContext, cfg: Config): Promise<void> {
   await appendNote(logFile, (needsHeader ? header : '') + entry + '\n');
 }
 
-/** Result body for a finished swarm run (same shape the sync API returned). */
-type RunResult = Record<string, unknown> & { status: 'complete' | 'partial' | 'error' };
+/** Result body for a finished run (same shape the sync API returned). */
+type RunResult = Record<string, unknown> & { status: Exclude<RunStatus, 'running'> };
 
 type Run = { status: 'running'; run_id: string } | (RunResult & { run_id: string });
 
-// Runs are kept in memory only; enough to poll a recent trigger.
+// Runs are kept in memory only; enough to poll a recent capture.
 const MAX_RUNS = 100;
 
-async function runSwarm(ctx: SwarmContext, cfg: Config): Promise<RunResult> {
+/** How a run's notes were linked and indexed, and so how the run finished. */
+interface RunTail {
+  status: 'complete' | 'partial';
+  linker: { status: string; links_written: number };
+  /** What failed, for the result's `errors`; empty when the run is complete. */
+  errors: string[];
+}
+
+/**
+ * What every run does once its notes are written: the Linker adds
+ * similarity links, then the notes are indexed. A failure in either leaves
+ * the notes written, and makes the run partial rather than an error.
+ * `errors` holds what already failed in the run.
+ */
+async function linkAndIndex(
+  notes: WrittenNote[],
+  about: { language: string; description: string },
+  errors: string[],
+  cfg: Config,
+  index: EmbeddingIndex,
+): Promise<RunTail> {
+  let linker: RunTail['linker'];
   try {
-    await writeSessionLog(ctx, cfg);
+    const result = await runLinker({ notes, ...about, cfg, index });
+    linker = { status: result.status, links_written: result.linksWritten };
+  } catch (err) {
+    errors.push(`linker: ${String(err)}`);
+    linker = { status: 'error', links_written: 0 };
+  }
 
-    // Documenter and Researcher run in parallel. allSettled so one agent
-    // failing doesn't take down the other's note.
-    const settled = await Promise.allSettled([
-      runDocumenter(ctx, cfg),
-      runResearcher(ctx, cfg),
-    ]);
+  // After the Linker, so the indexed content is the note as finally
+  // written (the Linker searches with the note's text, so it doesn't need
+  // the note indexed first). A note that fails to index is still in the
+  // vault, and the next startup sync picks it up.
+  try {
+    await index.indexNotes(notes.map(n => n.notePath));
+  } catch (err) {
+    errors.push(`index: ${String(err)}`);
+  }
 
-    const notes: NoteResult[] = [];
+  return { status: errors.length === 0 ? 'complete' : 'partial', linker, errors };
+}
+
+/** `errors` for a run's result, left out when nothing failed. */
+function errorsField(errors: string[]): { errors?: string[] } {
+  return errors.length > 0 ? { errors } : {};
+}
+
+async function runCodeCapture(ctx: CodeCapture, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
+  try {
+    await writeSessionLog(ctx.today, [
+      `- **File:** ${ctx.filePath}`,
+      `- **Language:** ${ctx.language}`,
+      `- **Description:** ${ctx.description}`,
+    ], cfg);
+
+    // Documenter and (when on) Researcher run in parallel. allSettled so one
+    // agent failing doesn't take down the other's note.
+    const agents = [
+      { agent: 'documenter', run: runDocumenter },
+      ...(cfg.researcher ? [{ agent: 'researcher', run: runResearcher }] : []),
+    ];
+    const settled = await Promise.allSettled(agents.map(a => a.run(ctx, cfg)));
+
+    const written: Array<{ agent: string; note: WrittenNote }> = [];
     const errors: string[] = [];
-    for (const result of settled) {
-      if (result.status === 'fulfilled') notes.push(result.value);
+    settled.forEach((result, i) => {
+      if (result.status === 'fulfilled') written.push({ agent: agents[i].agent, note: result.value });
       else errors.push(String(result.reason));
-    }
+    });
+    const notes = written.map(w => w.note);
 
-    const linker = await runLinker(notes, ctx.language, ctx.description, cfg);
+    const tail = await linkAndIndex(notes, { language: ctx.language, description: ctx.description }, errors, cfg, index);
 
     return {
-      status: errors.length === 0 ? 'complete' : 'partial',
+      status: tail.status,
       session_date: ctx.today,
       file_path: ctx.filePath,
       language: ctx.language,
-      notes: notes.map(n => ({ agent: n.agent, note_path: n.notePath, title: n.title })),
-      linker: { status: linker.status, links_written: linker.linksWritten },
-      ...(errors.length > 0 ? { errors } : {}),
+      notes: written.map(w => ({ agent: w.agent, note_path: w.note.notePath, title: w.note.title })),
+      linker: tail.linker,
+      ...errorsField(tail.errors),
+    };
+  } catch (err) {
+    return { status: 'error', error: String(err) };
+  }
+}
+
+/** A memo run: no Documenter or Researcher; each memo is written, linked and indexed. */
+async function runMemos(memos: Memo[], date: string, cfg: Config, index: EmbeddingIndex): Promise<RunResult> {
+  try {
+    await writeSessionLog(date, memos.map(m => `- **Memo:** ${m.kind}: ${m.title}`), cfg);
+    const written = await writeMemos(memos, date, cfg);
+
+    // The Linker adds similarity links on top of the session links. A
+    // Linker failure leaves the memos written and linked to their session.
+    const notes: WrittenNote[] = written.map(w => ({ type: 'memo', notePath: w.notePath, title: w.memo.title }));
+    const description = memos.map(m => `${m.kind} memo: ${m.title}`).join('; ');
+    const tail = await linkAndIndex(notes, { language: 'unknown', description }, [], cfg, index);
+
+    return {
+      status: tail.status,
+      session_date: date,
+      memos: await Promise.all(
+        written.map(async w => ({ name: w.name, note_path: w.notePath, kind: w.memo.kind, links: await memoLinks(w) })),
+      ),
+      linker: tail.linker,
+      ...errorsField(tail.errors),
     };
   } catch (err) {
     return { status: 'error', error: String(err) };
@@ -95,6 +176,42 @@ export function createApp(cfg: Config): Express {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   const runs = new Map<string, Run>();
+  const index = createEmbeddingIndex(cfg);
+
+  // Notes added or edited by hand while the service was down get indexed
+  // now. Searches and runs queue behind this inside the index.
+  void index.sync().then(
+    s => {
+      if (s.embedded > 0 || s.removed > 0) {
+        console.log(`index: ${s.notes} notes, ${s.embedded} embedded, ${s.removed} removed`);
+      }
+    },
+    err => console.error(`index: startup sync failed: ${String(err)}`),
+  );
+
+  // Every capture joins one queue and runs one at a time, in arrival order,
+  // so several runs never compete for one local Ollama. runCodeCapture never
+  // rejects, so a failed run can't stall the runs behind it.
+  let queue: Promise<void> = Promise.resolve();
+
+  /** Registers a run, queues its work, and returns the 202 body that points at it. */
+  function enqueue(label: string, work: () => Promise<RunResult>) {
+    const runId = randomUUID();
+    runs.set(runId, { status: 'running', run_id: runId });
+    // Map iterates in insertion order, so the first key is the oldest run.
+    if (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value!);
+
+    // Queued runs report 'running' too, so the status contract is unchanged.
+    queue = queue.then(async () => {
+      const started = Date.now();
+      const result = await work();
+      runs.set(runId, { ...result, run_id: runId });
+      const secs = ((Date.now() - started) / 1000).toFixed(1);
+      console.log(`run ${runId} ${result.status} in ${secs}s (${label})`);
+    });
+
+    return { status: 'accepted', run_id: runId, status_url: `/webhook/knowledge-graph/runs/${runId}` };
+  }
 
   app.get('/healthz', (_req, res) => {
     res.json({ status: 'ok' });
@@ -113,31 +230,88 @@ export function createApp(cfg: Config): Express {
       return;
     }
 
-    const ctx: SwarmContext = {
+    const ctx: CodeCapture = {
       filePath: body.file_path || '',
       language: body.language || 'unknown',
       description: body.description || '',
       changedCode: body.changed_code || '',
       today: today(),
+      session: trimmedString(body.session_id),
+      project: trimmedString(body.project),
     };
 
-    const runId = randomUUID();
-    runs.set(runId, { status: 'running', run_id: runId });
-    // Map iterates in insertion order, so the first key is the oldest run.
-    if (runs.size > MAX_RUNS) runs.delete(runs.keys().next().value!);
+    res.status(202).json(enqueue(ctx.filePath || ctx.description, () => runCodeCapture(ctx, cfg, index)));
+  });
 
-    const started = Date.now();
-    void runSwarm(ctx, cfg).then(result => {
-      runs.set(runId, { ...result, run_id: runId });
-      const secs = ((Date.now() - started) / 1000).toFixed(1);
-      console.log(`run ${runId} ${result.status} in ${secs}s (${ctx.filePath || ctx.description})`);
-    });
+  // Memos: captures the session's agent already wrote. Same queue and reply
+  // as a code capture; the run writes, links and indexes each memo.
+  app.post('/webhook/knowledge-graph/memo', (req, res) => {
+    const parsed = parseMemos(req.body);
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const { memos } = parsed;
+    const date = today();
+    res.status(202).json(enqueue(`${memos.length} memo(s)`, () => runMemos(memos, date, cfg, index)));
+  });
 
-    res.status(202).json({
-      status: 'accepted',
-      run_id: runId,
-      status_url: `/webhook/knowledge-graph/runs/${runId}`,
-    });
+  // Recall: ranked notes for a query, optionally narrowed by type, kind and
+  // status. Research notes are never returned.
+  app.post('/webhook/knowledge-graph/search', async (req, res) => {
+    const parsed = parseSearch(req.body);
+    if ('error' in parsed) {
+      res.status(400).json({ error: parsed.error });
+      return;
+    }
+    const { query, limit, ...filters } = parsed;
+
+    try {
+      const results = await index.search(query, { limit, ...filters });
+      res.json({ query, ...filters, results });
+    } catch (err) {
+      res.status(502).json({ error: `Search failed: ${String(err)}` });
+    }
+  });
+
+  // Recall: one note by name, in full up to cfg.noteMaxChars characters.
+  app.get('/webhook/knowledge-graph/notes/:name', async (req, res) => {
+    try {
+      const note = await readNote(cfg.vaultPath, req.params.name, cfg.noteMaxChars);
+      if (!note) {
+        res.status(404).json({ error: `No note named "${req.params.name}"` });
+        return;
+      }
+      res.json(note);
+    } catch (err) {
+      res.status(500).json({ error: `Reading the note failed: ${String(err)}` });
+    }
+  });
+
+  // Recall: the notes a note links to and the notes linking to it, so an
+  // agent can walk the graph from a search hit. Session logs are left out.
+  app.get('/webhook/knowledge-graph/notes/:name/related', async (req, res) => {
+    try {
+      const related = await relatedNotes(cfg.vaultPath, req.params.name);
+      if (!related) {
+        res.status(404).json({ error: `No note named "${req.params.name}"` });
+        return;
+      }
+      res.json(related);
+    } catch (err) {
+      res.status(500).json({ error: `Reading the related notes failed: ${String(err)}` });
+    }
+  });
+
+  // Throws the index away and rebuilds it from the notes. Replies when done.
+  app.post('/webhook/knowledge-graph/reindex', async (_req, res) => {
+    try {
+      const { notes, embedded } = await index.rebuild();
+      console.log(`index: rebuilt, ${notes} notes embedded`);
+      res.json({ status: 'complete', notes, embedded });
+    } catch (err) {
+      res.status(502).json({ error: `Reindex failed: ${String(err)}` });
+    }
   });
 
   app.get('/webhook/knowledge-graph/runs/:id', (req, res) => {
@@ -150,4 +324,13 @@ export function createApp(cfg: Config): Express {
   });
 
   return app;
+}
+
+/** Creates the app and listens on cfg.host:cfg.port; resolves once it is listening. */
+export function startServer(cfg: Config): Promise<http.Server> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer(createApp(cfg));
+    server.once('error', reject);
+    server.listen(cfg.port, cfg.host, () => resolve(server));
+  });
 }

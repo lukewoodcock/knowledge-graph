@@ -4,9 +4,12 @@
 
 export const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'] as const;
 export type EditTool = (typeof EDIT_TOOLS)[number];
+/** Tools that run commands, which can change files without an edit tool call. */
+export const SHELL_TOOLS = ['Bash', 'PowerShell'];
 
 export interface FileEdit {
-  tool: EditTool;
+  /** The edit tool, or 'shell' for a file a command changed (found through git). */
+  tool: EditTool | 'shell';
   filePath: string;
   /** New text from the tool input; the fallback when git has no diff. */
   content: string;
@@ -16,6 +19,10 @@ export interface Turn {
   prompt: string;
   /** In call order; a file edited twice appears twice (see uniqueFiles). */
   edits: FileEdit[];
+  /** When the prompt was sent (the transcript line's timestamp), when known. */
+  startedAt?: string;
+  /** Whether Claude ran a shell command this turn, outside any subagent. */
+  ranCommands: boolean;
 }
 
 interface ContentBlock {
@@ -30,6 +37,7 @@ interface ContentBlock {
 
 interface TranscriptLine {
   type?: string;
+  timestamp?: string;
   isMeta?: boolean;
   isSidechain?: boolean;
   message?: { content?: string | ContentBlock[] };
@@ -134,6 +142,7 @@ export function extractLastTurn(jsonl: string): Turn | null {
   const lines = jsonl.split('\n');
   const failed = new Set<string>();
   const edits: Array<FileEdit & { id?: string }> = [];
+  let ranCommands = false;
 
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = parseLine(lines[i]);
@@ -142,7 +151,12 @@ export function extractLastTurn(jsonl: string): Turn | null {
     const prompt = promptText(line);
     if (prompt !== null) {
       const ok = edits.filter(e => !e.id || !failed.has(e.id)).reverse();
-      return { prompt, edits: ok.map(({ id: _id, ...e }) => e) };
+      return {
+        prompt,
+        edits: ok.map(({ id: _id, ...e }) => e),
+        ...(line.timestamp ? { startedAt: line.timestamp } : {}),
+        ranCommands,
+      };
     }
 
     // Skip subagent lines: their edits belong to the subagent's own run.
@@ -153,6 +167,7 @@ export function extractLastTurn(jsonl: string): Turn | null {
         failed.add(b.tool_use_id);
       }
       if (line.type === 'assistant') {
+        if (b.type === 'tool_use' && SHELL_TOOLS.includes(b.name ?? '')) ranCommands = true;
         const edit = toFileEdit(b);
         if (edit) edits.push({ ...edit, id: b.id });
       }

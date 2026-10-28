@@ -1,118 +1,48 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
-import request from 'supertest';
-import { Express } from 'express';
-import { createApp } from '../src/server';
-import { Config } from '../src/config';
-
-/**
- * Mock Ollama: inspects the system prompt to decide which canned response to
- * return, mimicking how each agent gets a different reply.
- */
-function createMockOllama(state: { linkTargets: string[]; links: string[] }): http.Server {
-  return http.createServer((req, res) => {
-    let body = '';
-    req.on('data', c => (body += c));
-    req.on('end', () => {
-      const parsed = JSON.parse(body || '{}');
-      const system: string = parsed.messages?.[0]?.content ?? '';
-
-      let content: string;
-      if (system.includes('documentation assistant')) {
-        content = [
-          '---',
-          'title: "JWT Refresh Implementation"',
-          'date: 2026-06-10',
-          'tags: [python, jwt]',
-          'related: []',
-          'source: "ide-webhook"',
-          'type: "code"',
-          '---',
-          '',
-          '## Summary',
-          'Implements JWT refresh.',
-        ].join('\n');
-      } else if (system.includes('research assistant')) {
-        content = [
-          '---',
-          'title: "Research: JWT Refresh"',
-          'date: 2026-06-10',
-          'tags: [research, python, best-practices]',
-          'related: []',
-          'source: "ollama-research"',
-          'type: "research"',
-          '---',
-          '',
-          '## Overview',
-          'JWTs are stateless tokens.',
-        ].join('\n');
-      } else {
-        // Linker: suggest links for whichever note paths the test configured.
-        const linkMap = state.linkTargets.map(p => ({
-          new_note_path: p,
-          links_to_add: state.links,
-        }));
-        content = JSON.stringify(linkMap);
-      }
-
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ model: 'mock', message: { role: 'assistant', content }, done: true }));
-    });
-  });
-}
-
-// Under vitest's 5s test timeout, so a stuck run fails with its last status
-// instead of a bare "timed out".
-const RUN_DEADLINE_MS = 3000;
-
-/** Polls a run's status URL until it finishes, failing after RUN_DEADLINE_MS. */
-async function waitForRun(app: Express, statusUrl: string): Promise<request.Response> {
-  const deadline = Date.now() + RUN_DEADLINE_MS;
-  for (;;) {
-    const run = await request(app).get(statusUrl);
-    if (run.body.status !== 'running') return run;
-    if (Date.now() > deadline) {
-      throw new Error(`Run still running after ${RUN_DEADLINE_MS}ms: ${JSON.stringify(run.body)}`);
-    }
-    await new Promise(resolve => setTimeout(resolve, 5));
-  }
-}
-
-/** Triggers a run, checks it was accepted, then waits for it to finish. */
-async function triggerAndWait(app: Express, payload: object): Promise<request.Response> {
-  const accepted = await request(app).post('/webhook/knowledge-graph/trigger').send(payload);
-  expect(accepted.status).toBe(202);
-  return waitForRun(app, accepted.body.status_url);
-}
+import request from './helpers/http';
+import { createApp, startServer } from '../src/server';
+import { Config, loadConfig } from '../src/config';
+import {
+  close,
+  createMockOllama,
+  createMockOllamaState,
+  listen,
+  replyToEmbed,
+  resetMockOllamaState,
+} from './helpers/mock-ollama';
+import { triggerAndWait, waitForRun } from './helpers/runs';
 
 describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   let mockServer: http.Server;
   let mockPort: number;
   let vaultDir: string;
   let cfg: Config;
-  const mockState = { linkTargets: [] as string[], links: [] as string[] };
+  const mockState = createMockOllamaState();
 
   beforeAll(async () => {
     mockServer = createMockOllama(mockState);
-    await new Promise<void>(resolve => mockServer.listen(0, resolve));
-    mockPort = (mockServer.address() as { port: number }).port;
+    mockPort = await listen(mockServer);
   });
 
-  afterAll(() => new Promise<void>(resolve => mockServer.close(() => resolve())));
+  afterAll(() => close(mockServer));
 
   beforeEach(async () => {
     vaultDir = await fs.mkdtemp(path.join(os.tmpdir(), 'swarm-e2e-'));
-    mockState.linkTargets = [];
-    mockState.links = ['[[existing-note]]'];
+    resetMockOllamaState(mockState);
     cfg = {
+      host: '127.0.0.1',
       port: 0,
       vaultPath: vaultDir,
       ollamaUrl: `http://127.0.0.1:${mockPort}`,
       ollamaModel: 'mock-model',
       ollamaThink: false,
+      embedModel: 'mock-embed',
+      researcher: false,
+      noteMaxChars: 20_000,
     };
   });
 
@@ -147,8 +77,31 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     expect(res.body.status).toBe('complete');
     expect(res.body.file_path).toBe('src/auth/jwt.py');
     expect(res.body.language).toBe('python');
-    expect(res.body.notes).toHaveLength(2);
     expect(res.body.linker.status).toBe('success');
+  });
+
+  test('with the Researcher off (the default), a code capture writes only the Documenter note', async () => {
+    const res = await triggerAndWait(createApp(cfg), PAYLOAD);
+
+    expect(res.body.status).toBe('complete');
+    expect(res.body.notes).toHaveLength(1);
+    expect(res.body.notes[0].agent).toBe('documenter');
+    await expect(fs.readdir(path.join(vaultDir, 'research'))).rejects.toThrow();
+  });
+
+  test('the Researcher is off unless its setting is on', () => {
+    expect(loadConfig({}).researcher).toBe(false);
+    expect(loadConfig({ RESEARCHER_ENABLED: 'true' }).researcher).toBe(true);
+  });
+
+  test('with the Researcher on, a code capture writes a code note and a research note', async () => {
+    const res = await triggerAndWait(createApp({ ...cfg, researcher: true }), PAYLOAD);
+
+    expect(res.body.status).toBe('complete');
+    expect(res.body.notes.map((n: { agent: string }) => n.agent).sort()).toEqual([
+      'documenter',
+      'researcher',
+    ]);
   });
 
   test('writes a code note with required frontmatter', async () => {
@@ -162,8 +115,43 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     }
   });
 
-  test('writes a research note to research/', async () => {
-    await triggerAndWait(createApp(cfg), PAYLOAD);
+  /** Frontmatter block of every note the run wrote under code/ and research/. */
+  async function runNoteFrontmatters(): Promise<string[]> {
+    const out: string[] = [];
+    for (const dir of ['code', 'research']) {
+      for (const f of await fs.readdir(path.join(vaultDir, dir))) {
+        const content = await fs.readFile(path.join(vaultDir, dir, f), 'utf8');
+        out.push(/^---\n([\s\S]*?)\n---/.exec(content)?.[1] ?? '');
+      }
+    }
+    return out;
+  }
+
+  test('a code capture with session and project records both in every note it writes', async () => {
+    await triggerAndWait(createApp({ ...cfg, researcher: true }), { ...PAYLOAD, session_id: 'sess-123', project: 'project-a' });
+
+    const frontmatters = await runNoteFrontmatters();
+    expect(frontmatters).toHaveLength(2);
+    for (const fm of frontmatters) {
+      expect(fm).toMatch(/^project: "project-a"$/m);
+      expect(fm).toMatch(/^session: "sess-123"$/m);
+    }
+  });
+
+  test('a code capture without session and project still works, and the fields are absent', async () => {
+    const res = await triggerAndWait(createApp({ ...cfg, researcher: true }), PAYLOAD);
+
+    expect(res.body.status).toBe('complete');
+    const frontmatters = await runNoteFrontmatters();
+    expect(frontmatters).toHaveLength(2);
+    for (const fm of frontmatters) {
+      expect(fm).toContain('title:');
+      expect(fm).not.toMatch(/^(project|session):/m);
+    }
+  });
+
+  test('with the Researcher on, writes a research note to research/', async () => {
+    await triggerAndWait(createApp({ ...cfg, researcher: true }), PAYLOAD);
 
     const files = await fs.readdir(path.join(vaultDir, 'research'));
     expect(files).toHaveLength(1);
@@ -187,6 +175,8 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   });
 
   test('linker appends wikilinks to the new code note', async () => {
+    // The Linker only links to notes that exist, so give it one.
+    await fs.writeFile(path.join(vaultDir, 'existing-note.md'), 'An existing note.\n', 'utf8');
     const app = createApp(cfg);
 
     // First pass creates the notes; capture the code note path for the mock.
@@ -205,6 +195,7 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
   });
 
   test('linker drops links to the note itself and to the session log', async () => {
+    await fs.writeFile(path.join(vaultDir, 'existing-note.md'), 'An existing note.\n', 'utf8');
     const app = createApp(cfg);
     const first = await triggerAndWait(app, PAYLOAD);
     const codeNote = first.body.notes.find((n: { agent: string }) => n.agent === 'documenter');
@@ -230,6 +221,55 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
 
     expect(res.body.linker.links_written).toBe(0);
     await expect(fs.access(evil)).rejects.toThrow();
+  });
+
+  test('captures sent while a run is in progress run one at a time, in arrival order', async () => {
+    const app = createApp({ ...cfg, researcher: true });
+    mockState.delayMs = 30;
+    const captures = ['first', 'second', 'third'].map(name => ({
+      ...PAYLOAD,
+      file_path: `src/${name}.py`,
+      description: `capture-${name}`,
+    }));
+
+    const accepted = [];
+    for (const capture of captures) {
+      const res = await request(app).post('/webhook/knowledge-graph/trigger').send(capture);
+      expect(res.status).toBe(202);
+      accepted.push(res.body);
+    }
+    const finished = await Promise.all(accepted.map(a => waitForRun(app, a.status_url)));
+
+    expect(finished.map(r => r.body.status)).toEqual(['complete', 'complete', 'complete']);
+    // Every Ollama call names its capture's description; one at a time means
+    // each capture's calls form one unbroken block, in the order they were sent.
+    const owners = mockState.prompts.map(p => /(?:Description|Context): (capture-\w+)/.exec(p)![1]);
+    const blocks = owners.filter((o, i) => i === 0 || owners[i - 1] !== o);
+    expect(blocks).toEqual(['capture-first', 'capture-second', 'capture-third']);
+  });
+
+  test('a capture queued behind a failing run still runs', async () => {
+    const app = createApp({ ...cfg, ollamaUrl: 'http://127.0.0.1:1' });
+    const first = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+    const second = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+
+    const runs = await Promise.all([first, second].map(a => waitForRun(app, a.body.status_url)));
+    expect(runs.map(r => r.body.status)).toEqual(['partial', 'partial']);
+  });
+
+  test('the console logs one line per finished run with its id, status and duration', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const app = createApp(cfg);
+      const accepted = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
+      await waitForRun(app, accepted.body.status_url);
+
+      const lines = log.mock.calls.map(c => c.join(' ')).filter(l => l.includes(accepted.body.run_id));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(new RegExp(`${accepted.body.run_id} complete in \\d+\\.\\ds`));
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test('empty payload returns 400 with a helpful error', async () => {
@@ -258,6 +298,10 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
       let body = '';
       req.on('data', c => (body += c));
       req.on('end', () => {
+        if (req.url === '/api/embed') {
+          replyToEmbed(mockState, body, res);
+          return;
+        }
         const system: string = JSON.parse(body).messages?.[0]?.content ?? '';
         if (system.includes('research assistant')) {
           res.writeHead(500);
@@ -272,12 +316,11 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
         );
       });
     });
-    await new Promise<void>(resolve => flaky.listen(0, resolve));
-    const flakyPort = (flaky.address() as { port: number }).port;
+    const flakyPort = await listen(flaky);
 
     try {
       const res = await triggerAndWait(
-        createApp({ ...cfg, ollamaUrl: `http://127.0.0.1:${flakyPort}` }),
+        createApp({ ...cfg, researcher: true, ollamaUrl: `http://127.0.0.1:${flakyPort}` }),
         PAYLOAD,
       );
 
@@ -290,9 +333,104 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     }
   });
 
+  /**
+   * A mock Ollama whose Linker chat replies or embed calls fail with a 500;
+   * the Documenter's replies come from the shared mock.
+   */
+  async function withFailing(fail: 'linker' | 'embed', body: (ollamaUrl: string) => Promise<void>): Promise<void> {
+    const failing = http.createServer((req, res) => {
+      let raw = '';
+      req.on('data', c => (raw += c));
+      req.on('end', async () => {
+        if (req.url === '/api/embed') {
+          if (fail === 'embed') {
+            res.writeHead(500).end('embed down');
+            return;
+          }
+          replyToEmbed(mockState, raw, res);
+          return;
+        }
+        const system: string = JSON.parse(raw).messages?.[0]?.content ?? '';
+        if (system.includes('linking')) {
+          res.writeHead(500).end('linker down');
+          return;
+        }
+        const reply = await fetch(`http://127.0.0.1:${mockPort}/api/chat`, { method: 'POST', body: raw });
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(await reply.text());
+      });
+    });
+    const port = await listen(failing);
+    try {
+      await body(`http://127.0.0.1:${port}`);
+    } finally {
+      await close(failing);
+    }
+  }
+
+  test('a failed Linker makes a code capture partial: the note is written, reported and still indexed', async () => {
+    // Something for the Linker to link to, so it asks the model.
+    await fs.writeFile(path.join(vaultDir, 'existing-note.md'), 'Notes on jwt.\n', 'utf8');
+    await withFailing('linker', async ollamaUrl => {
+      const app = createApp({ ...cfg, ollamaUrl });
+
+      const res = await triggerAndWait(app, PAYLOAD);
+
+      expect(res.body.status).toBe('partial');
+      expect(res.body.errors.join(' ')).toContain('linker');
+      expect(res.body.linker).toEqual({ status: 'error', links_written: 0 });
+      const [note] = res.body.notes;
+      expect(note.agent).toBe('documenter');
+      await expect(fs.access(note.note_path)).resolves.toBeUndefined();
+      const search = await request(app).post('/webhook/knowledge-graph/search').send({ query: 'jwt', type: 'code' });
+      expect(search.body.results.map((r: { name: string }) => r.name)).toEqual([path.basename(note.note_path, '.md')]);
+    });
+  });
+
+  test("a failed search for the Linker's candidates makes a code capture partial, with its note still written and reported", async () => {
+    await withFailing('embed', async ollamaUrl => {
+      const res = await triggerAndWait(createApp({ ...cfg, ollamaUrl }), PAYLOAD);
+
+      expect(res.body.status).toBe('partial');
+      expect(res.body.errors.join(' ')).toContain('linker');
+      expect(res.body.notes).toHaveLength(1);
+      await expect(fs.access(res.body.notes[0].note_path)).resolves.toBeUndefined();
+    });
+  });
+
   test('healthz responds ok', async () => {
     const res = await request(createApp(cfg)).get('/healthz');
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('ok');
+  });
+
+  describe('bind address', () => {
+    /** Starts the real listener on a free port and returns the address it bound. */
+    async function boundAddress(env: NodeJS.ProcessEnv): Promise<string> {
+      const server = await startServer({ ...loadConfig(env), port: 0, vaultPath: vaultDir });
+      try {
+        return (server.address() as { address: string }).address;
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    }
+
+    test('by default the service listens on the loopback interface only', async () => {
+      expect(await boundAddress({})).toBe('127.0.0.1');
+    });
+
+    test('HOST changes the bind address', async () => {
+      expect(await boundAddress({ HOST: '0.0.0.0' })).toBe('0.0.0.0');
+    });
+
+    test('the started service answers on loopback', async () => {
+      const server = await startServer({ ...cfg, host: '127.0.0.1' });
+      try {
+        const { port } = server.address() as { port: number };
+        const res = await fetch(`http://127.0.0.1:${port}/healthz`);
+        expect(await res.json()).toEqual({ status: 'ok' });
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    });
   });
 });
