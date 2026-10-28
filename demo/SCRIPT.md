@@ -6,6 +6,35 @@ session B, in project B, asks about that work and gets an answer from project
 A's notes: first with context injection off (the agent chooses to search the
 graph), then on (the notes are already in its context).
 
+```mermaid
+sequenceDiagram
+  participant A as Session A, project A
+  participant S as swarm-kg service
+  participant V as Vault, in Obsidian
+  participant M as MCP server
+  participant B as Session B, project B
+
+  Note over A: 1. Claude builds the rate limiter
+  A->>S: Capture hook (Stop) sends code captures
+  Note over A: 2. /remember
+  A->>S: Memos
+  loop One run at a time
+    S->>V: Write notes and links
+  end
+  Note over V: The graph view shows the new notes
+  Note over M,B: 3. Context injection off
+  B->>B: Load the recall skill
+  B->>M: search_notes
+  M->>S: Search
+  B->>M: get_note
+  M->>S: Note
+  Note over S,B: 4. Context injection on
+  B->>S: Hook (UserPromptSubmit) searches with the prompt
+  S-->>B: Best notes, added to the prompt
+  B->>M: get_note only
+  M->>S: Note
+```
+
 **Success bar:** under ten minutes, and at least one question in project B
 answered correctly, citing a note written during the demo. If live note-writing
 fails, the seed vault still answers the [fallback question](#fallbacks).

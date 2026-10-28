@@ -18,20 +18,46 @@ unchanged**: existing IDE integrations and curl commands work as-is.
 For the whole loop on one page (capture, run, vault and recall, the trade-offs
 and the safety decisions), see [docs/architecture.md](docs/architecture.md).
 
-```
-IDE ──POST /webhook/knowledge-graph/trigger──►  swarm-kg service
-                                  (memos: POST …/memo skip straight to the Linker)
-                                                     │
-                                              queue (one run at a time)
-                                                     │
-                                          ┌──────────┴──────────┐
-                                          ▼                     ▼   (parallel)
-                                     Documenter            Researcher (optional)
-                                          └──────────┬──────────┘
-                                                     ▼
-                                                  Linker
-                                                     │
-                                              Obsidian Vault
+Session A writes to the graph and session B recalls from it:
+
+```mermaid
+flowchart LR
+  subgraph A["Session A, project A"]
+    CH["Capture hook<br/>Stop, async"]
+    RM["/remember skill<br/>the session's agent<br/>writes memos"]
+  end
+
+  subgraph W["swarm-kg service, 127.0.0.1 only: runs"]
+    Q["Capture queue<br/>one run at a time"]
+    DOC["Documenter"]
+    RES["Researcher<br/>off by default"]
+    LNK["Linker"]
+  end
+
+  subgraph V["Vault: markdown, open in Obsidian"]
+    N["Notes and links"]
+    I[".swarm-kg/index.json"]
+  end
+
+  subgraph R["swarm-kg service: read API"]
+    API["search, note, related"]
+  end
+
+  subgraph B["Session B, project B"]
+    MCP["MCP server, stdio<br/>guided by /recall"]
+    CI["Context-injection hook<br/>UserPromptSubmit, sync"]
+  end
+
+  CH -- "code captures" --> Q
+  RM -- "memos" --> Q
+  Q -- "code capture" --> DOC & RES
+  Q -- "memo" --> LNK
+  DOC & RES --> LNK
+  LNK -- "write" --> N
+  N -- "index after the run" --> I
+  I & N --> API
+  API -- "tool calls" --> MCP
+  API -- "best notes,<br/>every prompt" --> CI
 ```
 
 ## Quick start
