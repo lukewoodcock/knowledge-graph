@@ -54,7 +54,25 @@ describe('extractLastTurn (edge cases)', () => {
 
   test('a turn with no edits has an empty edit list', () => {
     const t = extractLastTurn(jsonl(prompt('explain this'), toolUse('t1', 'Read', { file_path: '/a.ts' })));
-    expect(t).toEqual({ prompt: 'explain this', edits: [] });
+    expect(t).toEqual({ prompt: 'explain this', edits: [], ranCommands: false });
+  });
+
+  test('records when the turn began and whether it ran a shell command', () => {
+    const t = extractLastTurn(
+      jsonl(
+        prompt('earlier', { timestamp: '2026-10-28T11:00:00.000Z' }),
+        toolUse('t0', 'Bash', { command: 'ls' }),
+        prompt('add the limiter', { timestamp: '2026-10-28T11:35:30.110Z' }),
+        toolUse('t1', 'Bash', { command: "python3 - <<'EOF' ... EOF" }),
+      ),
+    );
+    expect(t?.startedAt).toBe('2026-10-28T11:35:30.110Z');
+    expect(t?.ranCommands).toBe(true);
+  });
+
+  test("a subagent's shell commands don't count as the turn's", () => {
+    const t = extractLastTurn(jsonl(prompt('go'), { ...toolUse('t1', 'Bash', { command: 'ls' }), isSidechain: true }));
+    expect(t?.ranCommands).toBe(false);
   });
 
   test('skips malformed and half-written lines', () => {

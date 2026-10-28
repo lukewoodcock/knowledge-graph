@@ -490,7 +490,12 @@ claude -p "How did I back up Postgres before?" --allowedTools "Skill(recall)"
 [Stop hook](https://code.claude.com/docs/en/hooks#stop): at the end of each
 Claude turn it reads the session transcript, finds the files Claude changed
 since your last prompt (Edit / Write / MultiEdit / NotebookEdit calls that
-succeeded), and POSTs **one trigger per changed file** to the webhook. Each
+succeeded), and POSTs **one trigger per changed file** to the webhook. When
+the turn also ran a shell command (Claude may edit with a script or `sed`,
+as it often does in auto mode), the files git reports as changed or new that
+were modified after your prompt count too; git-ignored files never do. In a
+turn with no shell command, files changed meanwhile in your editor are left
+out, but in one with a command they can't be told apart and are captured. Each
 one has your prompt as `description`, `language` from the file extension,
 and `changed_code` from `git diff HEAD -- <file>`, or from the tool input when
 the file isn't tracked; both are capped at 4 KB. Every one also carries the

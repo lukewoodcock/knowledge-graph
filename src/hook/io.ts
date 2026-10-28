@@ -3,6 +3,7 @@
 // Every function here resolves rather than throws, so a failure can never
 // reach Claude.
 import { execFile } from 'child_process';
+import { promises as fs } from 'fs';
 import * as path from 'path';
 import { WebhookPayload } from './payload';
 
@@ -34,6 +35,58 @@ export function gitDiff(cwd: string, filePath: string, timeoutMs = 1000): Promis
       (err, stdout) => resolve(err ? '' : stdout),
     );
   });
+}
+
+/**
+ * Files in the project's git working tree that differ from HEAD or are new
+ * (git-ignored ones left out) and were last modified at or after `since`, as
+ * absolute paths. Deleted files are left out, since there's nothing to read.
+ * [] outside a repo or when git is slow.
+ */
+export async function filesChangedSince(projectDir: string, since: Date, timeoutMs = 1000): Promise<string[]> {
+  const status = await new Promise<string>(resolve => {
+    execFile(
+      'git',
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      { cwd: projectDir, timeout: timeoutMs, maxBuffer: 1024 * 1024 },
+      (err, stdout) => resolve(err ? '' : stdout),
+    );
+  });
+
+  // Entries are "XY path", NUL-separated; a rename or copy is followed by
+  // its old path as an entry of its own.
+  const paths: string[] = [];
+  const entries = status.split('\0');
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.length < 4) continue;
+    const xy = entry.slice(0, 2);
+    if (xy.includes('R') || xy.includes('C')) i++;
+    if (xy.includes('D')) continue;
+    paths.push(path.join(projectDir, entry.slice(3)));
+  }
+
+  const changed = await Promise.all(
+    paths.map(async p => {
+      try {
+        return (await fs.stat(p)).mtimeMs >= since.getTime() ? p : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return changed.filter((p): p is string => p !== null);
+}
+
+/** A text file's contents, or '' when it's missing, over `maxBytes`, or binary. */
+export async function readText(filePath: string, maxBytes = 256 * 1024): Promise<string> {
+  try {
+    if ((await fs.stat(filePath)).size > maxBytes) return '';
+    const text = await fs.readFile(filePath, 'utf8');
+    return text.includes('\0') ? '' : text;
+  } catch {
+    return '';
+  }
 }
 
 /**

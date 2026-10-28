@@ -51,6 +51,30 @@ async function writeTranscript(dir: string, files: string[]): Promise<string> {
   return p;
 }
 
+/** A transcript whose last turn began at `startedAt` and made these tool calls. */
+async function writeTurn(dir: string, startedAt: Date, calls: Array<[string, object]>): Promise<string> {
+  const lines = [
+    { type: 'user', timestamp: startedAt.toISOString(), message: { role: 'user', content: 'Add rate limiting' } },
+    ...calls.map(([name, input], i) => ({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name, input }] },
+    })),
+  ];
+  const p = path.join(dir, 'transcript.jsonl');
+  await fs.writeFile(p, lines.map(l => JSON.stringify(l)).join('\n') + '\n');
+  return p;
+}
+
+/** Writes and commits `files` (paths relative to the repo). */
+async function commitFiles(repo: string, files: Record<string, string>): Promise<void> {
+  for (const [rel, text] of Object.entries(files)) {
+    await fs.mkdir(path.dirname(path.join(repo, rel)), { recursive: true });
+    await fs.writeFile(path.join(repo, rel), text);
+  }
+  git(repo, 'add', '-A');
+  git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'files');
+}
+
 describe('projectName', () => {
   let tmp: string;
   beforeEach(async () => {
@@ -178,5 +202,71 @@ describe('capture hook entrypoint', () => {
     );
 
     expect(received.map(c => [c.file_path, c.project])).toEqual([['greet.ts', 'project-a']]);
+  });
+
+  describe('files changed by shell commands', () => {
+    const since = () => new Date(Date.now() - 2000);
+    const stop = (transcript: string, repo: string) =>
+      runHook({ session_id: 'sess-1', transcript_path: transcript, cwd: repo, hook_event_name: 'Stop' }, { SWARM_KG_URL: url });
+
+    test('a file Claude changed with a shell command is a code capture with its git diff, next to the edit-tool files', async () => {
+      const repo = await makeRepo(tmp, 'shortlinks');
+      await commitFiles(repo, { 'src/server.js': 'const limit = 1;\n' });
+      const rateLimit = path.join(repo, 'src', 'rate-limit.js');
+      const transcript = await writeTurn(tmp, since(), [
+        ['Write', { file_path: rateLimit, content: '// bucket' }],
+        ['Bash', { command: "python3 - <<'EOF'\n# edits src/server.js\nEOF" }],
+      ]);
+      await fs.writeFile(rateLimit, '// bucket\n');
+      await fs.writeFile(path.join(repo, 'src', 'server.js'), 'const limit = 5;\n');
+
+      await stop(transcript, repo);
+
+      expect(received.map(c => c.file_path)).toEqual(['src/rate-limit.js', 'src/server.js']);
+      expect(received[1].changed_code).toContain('+const limit = 5;');
+      expect(received[1].language).toBe('javascript');
+    });
+
+    test('a new file a shell command created is captured with its text, and git-ignored files are not', async () => {
+      const repo = await makeRepo(tmp, 'shortlinks');
+      await commitFiles(repo, { '.gitignore': 'data/\n' });
+      const transcript = await writeTurn(tmp, since(), [['Bash', { command: 'node scripts/gen.js' }]]);
+      await fs.mkdir(path.join(repo, 'src'));
+      await fs.writeFile(path.join(repo, 'src', 'codes.js'), 'module.exports = 42;\n');
+      await fs.mkdir(path.join(repo, 'data'));
+      await fs.writeFile(path.join(repo, 'data', 'links.json'), '{}');
+
+      await stop(transcript, repo);
+
+      expect(received.map(c => c.file_path)).toEqual(['src/codes.js']);
+      expect(received[0].changed_code).toContain('module.exports = 42;');
+    });
+
+    test('uncommitted changes from before the turn began are not captured again', async () => {
+      const repo = await makeRepo(tmp, 'shortlinks');
+      await commitFiles(repo, { 'src/server.js': 'const limit = 1;\n' });
+      const old = path.join(repo, 'src', 'server.js');
+      await fs.writeFile(old, 'const limit = 2;\n');
+      const anHourAgo = new Date(Date.now() - 3_600_000);
+      await fs.utimes(old, anHourAgo, anHourAgo);
+      const transcript = await writeTurn(tmp, since(), [['Bash', { command: 'npm test' }]]);
+
+      await stop(transcript, repo);
+
+      expect(received).toEqual([]);
+    });
+
+    test("in a turn with no shell command, files changed elsewhere (in the user's editor) are not captured", async () => {
+      const repo = await makeRepo(tmp, 'shortlinks');
+      await commitFiles(repo, { 'src/server.js': 'const limit = 1;\n' });
+      const greet = path.join(repo, 'greet.ts');
+      const transcript = await writeTurn(tmp, since(), [['Write', { file_path: greet, content: 'hi' }]]);
+      await fs.writeFile(greet, 'hi\n');
+      await fs.writeFile(path.join(repo, 'src', 'server.js'), 'const limit = 9;\n');
+
+      await stop(transcript, repo);
+
+      expect(received.map(c => c.file_path)).toEqual(['greet.ts']);
+    });
   });
 }, 20_000);
