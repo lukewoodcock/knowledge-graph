@@ -338,7 +338,7 @@ describe('search over the embedding index (end-to-end)', () => {
     await triggerAndWait(app, PAYLOAD);
     const before = await search(app, { query: 'jwt docker', limit: 50 });
 
-    await fs.rm(path.join(vaultDir, '.swarm-kg'), { recursive: true });
+    await fs.rm(path.join(vaultDir, '.knowledge-graph'), { recursive: true });
     const after = await search(createApp(cfg), { query: 'jwt docker', limit: 50 });
 
     expect(after.body.results).toEqual(before.body.results);
@@ -347,7 +347,7 @@ describe('search over the embedding index (end-to-end)', () => {
 
   test('a corrupt index file is thrown away and rebuilt from the notes on startup', async () => {
     await writeVaultNote('code/a.md', plainNote('A', ['## Notes', 'docker']));
-    await writeVaultNote('.swarm-kg/index.json', '{ not json');
+    await writeVaultNote('.knowledge-graph/index.json', '{ not json');
 
     expect(await resultNames(createApp(cfg), 'docker')).toEqual(['a']);
   });
@@ -495,7 +495,7 @@ describe('search over the embedding index (end-to-end)', () => {
       const lines: string[] = [];
 
       try {
-        const code = await reindex({ SWARM_KG_SERVICE_URL: `http://127.0.0.1:${port}` }, l => lines.push(l));
+        const code = await reindex({ KG_SERVICE_URL: `http://127.0.0.1:${port}` }, l => lines.push(l));
 
         expect(code).toBe(0);
         expect(lines.join('\n')).toContain('1 notes');
@@ -506,7 +506,7 @@ describe('search over the embedding index (end-to-end)', () => {
 
     test('the reindex command fails clearly when the service is down', async () => {
       const lines: string[] = [];
-      const code = await reindex({ SWARM_KG_SERVICE_URL: 'http://127.0.0.1:9' }, l => lines.push(l));
+      const code = await reindex({ KG_SERVICE_URL: 'http://127.0.0.1:9' }, l => lines.push(l));
 
       expect(code).toBe(1);
       expect(lines.join('\n')).toContain('http://127.0.0.1:9');

@@ -122,10 +122,10 @@ export async function remember(
     base: serviceUrl(env),
     log,
     pollMs: opts.pollMs ?? 1000,
-    waitMs: positiveInt(env.SWARM_KG_REMEMBER_WAIT_MS, DEFAULT_WAIT_MS),
+    waitMs: positiveInt(env.KG_REMEMBER_WAIT_MS, DEFAULT_WAIT_MS),
   };
   const unreachable = (err: Unreachable, what: string) => {
-    log(`The swarm-kg service is not reachable at ${svc.base} (${err.message}). Is it running? ${what}`);
+    log(`The knowledge-graph service is not reachable at ${svc.base} (${err.message}). Is it running? ${what}`);
     return 1;
   };
 

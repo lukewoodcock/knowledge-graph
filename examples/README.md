@@ -18,7 +18,7 @@ Code"):
 
 | File | Copy to | What it does |
 |------|---------|--------------|
-| [`mcp.json`](mcp.json) | `<project>/.mcp.json` | The `swarm-kg` MCP server: `search_notes`, `get_note`, `related_notes` |
+| [`mcp.json`](mcp.json) | `<project>/.mcp.json` | The `knowledge-graph` MCP server: `search_notes`, `get_note`, `related_notes` |
 | [`skills/recall/`](skills/recall/SKILL.md) | `<project>/.claude/skills/recall/` | The `/recall` skill |
 | [`skills/remember/`](skills/remember/SKILL.md) | `<project>/.claude/skills/remember/` | The `/remember` skill: the agent in the session writes memos from the conversation and saves them to the graph |
 
@@ -37,16 +37,16 @@ memo, one memo per distinct thing; with an argument (`/remember the deploy
 script`), just that. It writes the memos to a file in its scratchpad and sends
 them with `node dist/remember.js`, which the skill's `allowed-tools`
 pre-approves, so saving needs no permission prompt. The service must be
-running; set `SWARM_KG_SERVICE_URL` in the environment Claude Code starts in
+running; set `KG_SERVICE_URL` in the environment Claude Code starts in
 if it isn't on `http://127.0.0.1:5678`. See the
 [README](../README.md#save-memos-from-claude-code-remember) for how it works.
 
 ## Context injection
 
 Off unless you add its entry to a project's settings, and switched off again by
-removing it (or with `SWARM_KG_DISABLE=1`). On every prompt it searches the
-graph with the prompt and, when notes score at least `SWARM_KG_MIN_SCORE`, adds
-the best three as additional context, in a `<swarm-kg-reference-notes>` block
+removing it (or with `KG_DISABLE=1`). On every prompt it searches the
+graph with the prompt and, when notes score at least `KG_MIN_SCORE`, adds
+the best three as additional context, in a `<knowledge-graph-reference-notes>` block
 that names each note and tells Claude they are reference material, not
 instructions. Prompts starting with `/` (such as `/recall ...`) are skipped.
 
@@ -83,17 +83,17 @@ unrelated work, and rely on the `/recall` skill there.
 ### Settings
 
 Set them in front of the command, for example
-`"command": "SWARM_KG_MIN_SCORE=0.65 node /ABSOLUTE/PATH/TO/swarm-kg/dist/hook/prompt.js"`.
+`"command": "KG_MIN_SCORE=0.65 node /ABSOLUTE/PATH/TO/knowledge-graph/dist/hook/prompt.js"`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SWARM_KG_SERVICE_URL` | `http://127.0.0.1:5678` | The service, as for the MCP server; the hook calls its `/webhook/knowledge-graph/search` |
-| `SWARM_KG_MIN_SCORE` | `0.6` | Relevance threshold: notes scoring below it are left out |
-| `SWARM_KG_MAX_NOTES` | `3` | Most notes added to one prompt |
-| `SWARM_KG_MAX_CONTEXT_CHARS` | `4000` | Most characters added, wrapper included; never more than 9,000, as Claude Code moves context over 10,000 characters to a file |
-| `SWARM_KG_SEARCH_TIMEOUT_MS` | `1500` | How long to wait for the search before adding nothing |
-| `SWARM_KG_DISABLE` | unset | `1` turns the hook off |
-| `SWARM_KG_DEBUG` | unset | `1` logs what it did to stderr |
+| `KG_SERVICE_URL` | `http://127.0.0.1:5678` | The service, as for the MCP server; the hook calls its `/webhook/knowledge-graph/search` |
+| `KG_MIN_SCORE` | `0.6` | Relevance threshold: notes scoring below it are left out |
+| `KG_MAX_NOTES` | `3` | Most notes added to one prompt |
+| `KG_MAX_CONTEXT_CHARS` | `4000` | Most characters added, wrapper included; never more than 9,000, as Claude Code moves context over 10,000 characters to a file |
+| `KG_SEARCH_TIMEOUT_MS` | `1500` | How long to wait for the search before adding nothing |
+| `KG_DISABLE` | unset | `1` turns the hook off |
+| `KG_DEBUG` | unset | `1` logs what it did to stderr |
 
 The default threshold was measured with `bge-large` against ten typical code
 notes: for prompts about something in the graph the right note scored 0.63 to

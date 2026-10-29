@@ -38,7 +38,7 @@ function toolError(t: string): CallToolResult {
 /** Builds the MCP server; `baseUrl` is the service's base URL, as serviceUrl() gives it. */
 export function buildMcpServer(baseUrl: string): McpServer {
   const base = `${baseUrl}/webhook/knowledge-graph`;
-  const server = new McpServer({ name: 'swarm-kg', version: '1.0.0' });
+  const server = new McpServer({ name: 'knowledge-graph', version: '1.0.0' });
 
   /**
    * Calls the service and hands back its JSON reply as the tool's text. A
@@ -52,13 +52,13 @@ export function buildMcpServer(baseUrl: string): McpServer {
       res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
     } catch (err) {
       return toolError(
-        `The swarm-kg service is not reachable at ${baseUrl}. Is it running? (${errorMessage(err)})`,
+        `The knowledge-graph service is not reachable at ${baseUrl}. Is it running? (${errorMessage(err)})`,
       );
     }
     const body = (await res.json().catch(() => undefined)) as { error?: unknown } | undefined;
     if (!res.ok) {
       const detail = typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`;
-      return toolError(`The swarm-kg service could not answer: ${detail}`);
+      return toolError(`The knowledge-graph service could not answer: ${detail}`);
     }
     return toolText(JSON.stringify(body, null, 2));
   }
@@ -117,7 +117,7 @@ export function buildMcpServer(baseUrl: string): McpServer {
 if (require.main === module) {
   const server = buildMcpServer(serviceUrl());
   server.connect(new StdioServerTransport()).catch(err => {
-    console.error(`swarm-kg mcp: ${String(err)}`);
+    console.error(`knowledge-graph mcp: ${String(err)}`);
     process.exit(1);
   });
 }

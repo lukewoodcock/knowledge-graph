@@ -1,10 +1,10 @@
-# swarm-kg
+# knowledge-graph
 
 ## Agent skills
 
 ### Issue tracker
 
-Issues and specs are GitHub issues on lukewoodcock/swarm-kg, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues and specs are GitHub issues on lukewoodcock/knowledge-graph, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

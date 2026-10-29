@@ -5,7 +5,7 @@
 #
 #   demo/injection.sh <project-dir> on|off [min-score]
 #
-# min-score sets SWARM_KG_MIN_SCORE in the hook's command: 0.65 unless given,
+# min-score sets KG_MIN_SCORE in the hook's command: 0.65 unless given,
 # the value measured against the seed vault (see demo/SCRIPT.md).
 set -euo pipefail
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

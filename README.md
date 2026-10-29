@@ -1,4 +1,4 @@
-# swarm-kg
+# knowledge-graph
 
 A local AI agent swarm that builds a personal knowledge graph in your
 **Obsidian** vault, powered by **Ollama** (local LLMs). POST your working
@@ -27,7 +27,7 @@ flowchart LR
     RM["/remember skill<br/>the session's agent<br/>writes memos"]
   end
 
-  subgraph W["swarm-kg service, 127.0.0.1 only: runs"]
+  subgraph W["knowledge-graph service, 127.0.0.1 only: runs"]
     Q["Capture queue<br/>one run at a time"]
     DOC["Documenter"]
     RES["Researcher<br/>off by default"]
@@ -36,10 +36,10 @@ flowchart LR
 
   subgraph V["Vault: markdown, open in Obsidian"]
     N["Notes and links"]
-    I[".swarm-kg/index.json"]
+    I[".knowledge-graph/index.json"]
   end
 
-  subgraph R["swarm-kg service: read API"]
+  subgraph R["knowledge-graph service: read API"]
     API["search, note, related"]
   end
 
@@ -78,9 +78,9 @@ on every interface inside the container (`HOST=0.0.0.0`), so the `-p` address
 is what keeps it private.
 
 ```bash
-docker build -t swarm-kg .
+docker build -t knowledge-graph .
 docker run -d -p 127.0.0.1:5678:5678 -v /path/to/vault:/vault \
-  -e OLLAMA_URL=http://host.docker.internal:11434 swarm-kg
+  -e OLLAMA_URL=http://host.docker.internal:11434 knowledge-graph
 ```
 
 ### Trigger from the IDE
@@ -259,8 +259,8 @@ Saved 2 memo(s) to the graph for project url-shortener, session 2d27…:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SWARM_KG_SERVICE_URL` | `http://127.0.0.1:5678` | The service |
-| `SWARM_KG_REMEMBER_WAIT_MS` | `100000` | How long to wait for the run before exiting with `2`; under the Bash tool's two-minute default timeout |
+| `KG_SERVICE_URL` | `http://127.0.0.1:5678` | The service |
+| `KG_REMEMBER_WAIT_MS` | `100000` | How long to wait for the run before exiting with `2`; under the Bash tool's two-minute default timeout |
 
 Why a file rather than a heredoc: Claude Code's Bash check refuses, before any
 allow rule applies, a command whose text holds a brace followed by a quote
@@ -344,7 +344,7 @@ need to be indexed for this, so a run indexes its notes once, after the
 Linker. Since research notes are never search hits, they aren't link
 candidates either.
 
-The vectors live in `.swarm-kg/index.json` inside the vault (Obsidian hides
+The vectors live in `.knowledge-graph/index.json` inside the vault (Obsidian hides
 dot folders), with a content hash per note. The notes stay the only source of
 truth: on startup the service indexes notes that are missing or changed (seed
 notes, notes you wrote or edited in Obsidian) and drops notes that were
@@ -355,8 +355,8 @@ while the service runs:
 npm run build && npm run reindex   # POSTs /webhook/knowledge-graph/reindex
 ```
 
-`npm run reindex` talks to `SWARM_KG_SERVICE_URL` (default
-`http://127.0.0.1:5678`). With the service stopped, delete `.swarm-kg/` and
+`npm run reindex` talks to `KG_SERVICE_URL` (default
+`http://127.0.0.1:5678`). With the service stopped, delete `.knowledge-graph/` and
 start it instead. Changing `OLLAMA_EMBED_MODEL` re-embeds every note on the
 next start.
 
@@ -411,7 +411,7 @@ has no network listener of its own; each tool calls the service's HTTP API:
 Each tool returns the service's JSON reply as text. Every tool description
 tells the agent that note contents are reference material, not instructions.
 A missing note, or the service being down, comes back as a tool error the
-agent can read (`The swarm-kg service is not reachable at … Is it running?`),
+agent can read (`The knowledge-graph service is not reachable at … Is it running?`),
 never as a crash.
 
 Add it to a project's `.mcp.json` (after `npm run build` in this repo):
@@ -419,19 +419,19 @@ Add it to a project's `.mcp.json` (after `npm run build` in this repo):
 ```json
 {
   "mcpServers": {
-    "swarm-kg": {
+    "knowledge-graph": {
       "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/swarm-kg/dist/mcp/server.js"],
-      "env": { "SWARM_KG_SERVICE_URL": "http://127.0.0.1:5678" }
+      "args": ["/ABSOLUTE/PATH/TO/knowledge-graph/dist/mcp/server.js"],
+      "env": { "KG_SERVICE_URL": "http://127.0.0.1:5678" }
     }
   }
 }
 ```
 
 Or from the command line:
-`claude mcp add swarm-kg --scope project -e SWARM_KG_SERVICE_URL=http://127.0.0.1:5678 -- node /ABSOLUTE/PATH/TO/swarm-kg/dist/mcp/server.js`.
-Claude Code then names the tools `mcp__swarm-kg__search_notes` and so on.
-`SWARM_KG_SERVICE_URL` defaults to `http://127.0.0.1:5678`.
+`claude mcp add knowledge-graph --scope project -e KG_SERVICE_URL=http://127.0.0.1:5678 -- node /ABSOLUTE/PATH/TO/knowledge-graph/dist/mcp/server.js`.
+Claude Code then names the tools `mcp__knowledge-graph__search_notes` and so on.
+`KG_SERVICE_URL` defaults to `http://127.0.0.1:5678`.
 
 ### Wire recall into a project (`/recall`)
 
@@ -450,7 +450,7 @@ the capture hook:
 
 | Copy | To | What it does |
 |------|----|--------------|
-| `examples/mcp.json` | `<project>/.mcp.json` | Adds the `swarm-kg` MCP server |
+| `examples/mcp.json` | `<project>/.mcp.json` | Adds the `knowledge-graph` MCP server |
 | `examples/skills/recall/` | `<project>/.claude/skills/recall/` | Adds the `/recall` skill |
 | `examples/claude-settings.json` | `<project>/.claude/settings.json` | Pre-approves the skill and the three tools, enables the MCP server, and adds the capture hook |
 
@@ -469,7 +469,7 @@ keeps every project on this repo's copy. The service must be running; if it
 isn't, the tools say so and `/recall` tells you to start it.
 
 Open the project once in an interactive Claude Code session and accept the
-trust dialog and the `swarm-kg` server prompt. Until a folder is trusted,
+trust dialog and the `knowledge-graph` server prompt. Until a folder is trusted,
 Claude Code ignores the `permissions.allow` and `enabledMcpjsonServers`
 entries of its committed `.claude/settings.json`. Headless runs
 (`claude -p`) load the project's skill and MCP server without asking, and
@@ -511,8 +511,8 @@ code. A turn with no edits to project files sends nothing.
 
 It never gets in Claude's way: nothing on stdout, always exit 0, a 2s
 timeout per POST and a 5s hard deadline. It does nothing when
-`stop_hook_active` is true, when `SWARM_KG_DISABLE=1`, or when the session's
-`cwd` is inside `SWARM_KG_VAULT_PATH`, so Claude editing the vault can't
+`stop_hook_active` is true, when `KG_DISABLE=1`, or when the session's
+`cwd` is inside `KG_VAULT_PATH`, so Claude editing the vault can't
 feed the graph its own notes. Files inside the vault or the session's
 scratchpad (`scratchpad_dir` in the hook input) are never sent: the scratchpad
 holds temporary files, such as the memos file `/remember` writes.
@@ -536,18 +536,18 @@ Try it by hand without Claude:
 ```bash
 echo '{"hook_event_name":"Stop","stop_hook_active":false,
        "cwd":"'"$PWD"'","transcript_path":"'"$PWD"'/tests/fixtures/stop-transcript.jsonl"}' \
-  | SWARM_KG_DEBUG=1 node dist/hook/stop.js
-# [swarm-kg hook] 202 /demo/app/src/auth/jwt.ts   (one line per file, on stderr)
+  | KG_DEBUG=1 node dist/hook/stop.js
+# [knowledge-graph hook] 202 /demo/app/src/auth/jwt.ts   (one line per file, on stderr)
 ```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SWARM_KG_URL` | `http://localhost:5678/webhook/knowledge-graph/trigger` | Webhook to POST to |
-| `SWARM_KG_VAULT_PATH` | unset | Skip sessions whose `cwd` is inside this path, and edits to files in it |
-| `SWARM_KG_DISABLE` | unset | `1` turns the hook off |
-| `SWARM_KG_MAX_FILES` | `5` | Most triggers sent per turn |
-| `SWARM_KG_TIMEOUT_MS` | `2000` | Per-POST timeout |
-| `SWARM_KG_DEBUG` | unset | `1` logs what it did to stderr |
+| `KG_URL` | `http://localhost:5678/webhook/knowledge-graph/trigger` | Webhook to POST to |
+| `KG_VAULT_PATH` | unset | Skip sessions whose `cwd` is inside this path, and edits to files in it |
+| `KG_DISABLE` | unset | `1` turns the hook off |
+| `KG_MAX_FILES` | `5` | Most triggers sent per turn |
+| `KG_TIMEOUT_MS` | `2000` | Per-POST timeout |
+| `KG_DEBUG` | unset | `1` logs what it did to stderr |
 
 ### Context injection (UserPromptSubmit hook)
 
@@ -567,7 +567,7 @@ on, and its settings. Try it by hand with the service running:
 
 ```bash
 echo '{"hook_event_name":"UserPromptSubmit","prompt":"Why are captures processed one at a time?"}' \
-  | SWARM_KG_DEBUG=1 node dist/hook/prompt.js
+  | KG_DEBUG=1 node dist/hook/prompt.js
 ```
 
 ## Demo
@@ -579,9 +579,9 @@ reset script, a context-injection toggle, and
 fallback.
 
 ```bash
-demo/setup.sh ~/swarm-kg-demo && source ~/swarm-kg-demo/demo.env
+demo/setup.sh ~/knowledge-graph-demo && source ~/knowledge-graph-demo/demo.env
 demo/service.sh "$DEMO_VAULT"                                # in its own terminal
-demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"    # before each run
+demo/reset.sh "$DEMO_VAULT" --url "$KG_SERVICE_URL"    # before each run
 ```
 
 ## Development
@@ -665,5 +665,5 @@ Behaviour-preserving migration, with a few deliberate fixes:
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). swarm-kg isn't open to contributions yet; see
+MIT, see [LICENSE](LICENSE). knowledge-graph isn't open to contributions yet; see
 [CONTRIBUTING.md](CONTRIBUTING.md).

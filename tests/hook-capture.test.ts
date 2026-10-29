@@ -23,9 +23,9 @@ async function makeRepo(parent: string, name: string): Promise<string> {
   return dir;
 }
 
-/** Runs the hook with `input` on stdin and an env free of the developer's own SWARM_KG_* settings. */
+/** Runs the hook with `input` on stdin and an env free of the developer's own KG_* settings. */
 function runHook(input: object, env: Record<string, string>): Promise<number | null> {
-  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('SWARM_KG_') && k !== 'CLAUDE_PROJECT_DIR'));
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('KG_') && k !== 'CLAUDE_PROJECT_DIR'));
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['--import', 'tsx', HOOK], {
       env: { ...clean, ...env },
@@ -139,7 +139,7 @@ describe('capture hook entrypoint', () => {
 
     const code = await runHook(
       { session_id: 'sess-42', transcript_path: transcript, cwd: path.join(repo, 'src'), hook_event_name: 'Stop' },
-      { SWARM_KG_URL: url },
+      { KG_URL: url },
     );
 
     expect(code).toBe(0);
@@ -155,7 +155,7 @@ describe('capture hook entrypoint', () => {
     await fs.mkdir(dir);
     const transcript = await writeTranscript(tmp, [path.join(dir, 'a.py')]);
 
-    await runHook({ session_id: 'sess-7', transcript_path: transcript, cwd: dir, hook_event_name: 'Stop' }, { SWARM_KG_URL: url });
+    await runHook({ session_id: 'sess-7', transcript_path: transcript, cwd: dir, hook_event_name: 'Stop' }, { KG_URL: url });
 
     expect(received).toHaveLength(1);
     expect(received[0].project).toBe('loose-files');
@@ -170,7 +170,7 @@ describe('capture hook entrypoint', () => {
 
     await runHook(
       { session_id: 'sess-1', transcript_path: transcript, cwd: repo, scratchpad_dir: scratchpad, hook_event_name: 'Stop' },
-      { SWARM_KG_URL: url },
+      { KG_URL: url },
     );
 
     expect(received.map(c => c.file_path)).toEqual(['greet.ts']);
@@ -184,7 +184,7 @@ describe('capture hook entrypoint', () => {
 
     await runHook(
       { session_id: 'sess-1', transcript_path: transcript, cwd: path.join(repo, 'src'), hook_event_name: 'Stop' },
-      { SWARM_KG_URL: url },
+      { KG_URL: url },
     );
 
     expect(received.map(c => c.file_path)).toEqual(['greet.ts']);
@@ -198,7 +198,7 @@ describe('capture hook entrypoint', () => {
 
     await runHook(
       { session_id: 'sess-1', transcript_path: transcript, cwd: elsewhere, hook_event_name: 'Stop' },
-      { SWARM_KG_URL: url, CLAUDE_PROJECT_DIR: repo },
+      { KG_URL: url, CLAUDE_PROJECT_DIR: repo },
     );
 
     expect(received.map(c => [c.file_path, c.project])).toEqual([['greet.ts', 'project-a']]);
@@ -207,7 +207,7 @@ describe('capture hook entrypoint', () => {
   describe('files changed by shell commands', () => {
     const since = () => new Date(Date.now() - 2000);
     const stop = (transcript: string, repo: string) =>
-      runHook({ session_id: 'sess-1', transcript_path: transcript, cwd: repo, hook_event_name: 'Stop' }, { SWARM_KG_URL: url });
+      runHook({ session_id: 'sess-1', transcript_path: transcript, cwd: repo, hook_event_name: 'Stop' }, { KG_URL: url });
 
     test('a file Claude changed with a shell command is a code capture with its git diff, next to the edit-tool files', async () => {
       const repo = await makeRepo(tmp, 'shortlinks');

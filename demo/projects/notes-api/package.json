@@ -2,7 +2,7 @@
   "name": "notes-api",
   "version": "0.1.0",
   "private": true,
-  "description": "A tiny dependency-free REST API for notes (swarm-kg demo project B)",
+  "description": "A tiny dependency-free REST API for notes (knowledge-graph demo project B)",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js"

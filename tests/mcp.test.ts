@@ -227,20 +227,20 @@ describe('MCP server for recall', () => {
     for (const [tool, args] of calls) {
       const result = await callTool(c, tool, args);
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain(`The swarm-kg service is not reachable at ${deadUrl}`);
+      expect(result.content[0].text).toContain(`The knowledge-graph service is not reachable at ${deadUrl}`);
     }
     // Still answering after the failures.
     expect((await c.listTools()).tools).toHaveLength(3);
   });
 
-  test('runs as a stdio process that reads the service URL from SWARM_KG_SERVICE_URL', async () => {
+  test('runs as a stdio process that reads the service URL from KG_SERVICE_URL', async () => {
     await writeVaultNote('memos/cache-decision.md', CACHE_NOTE);
     const serviceUrl = await startService();
     // tsx runs the entrypoint as `node dist/mcp/server.js` would, without a build.
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [path.join(ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs'), path.join(ROOT, 'src', 'mcp', 'server.ts')],
-      env: { ...getDefaultEnvironment(), SWARM_KG_SERVICE_URL: serviceUrl },
+      env: { ...getDefaultEnvironment(), KG_SERVICE_URL: serviceUrl },
       stderr: 'ignore',
     });
     client = new Client({ name: 'test', version: '0.0.0' });

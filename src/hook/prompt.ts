@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   const cfg = loadInjectionConfig();
   // stderr only, and only when asked: Claude Code reads stdout as the hook's output.
   const log = (msg: string): void => {
-    if (cfg.debug) process.stderr.write(`[swarm-kg prompt hook] ${msg}\n`);
+    if (cfg.debug) process.stderr.write(`[knowledge-graph prompt hook] ${msg}\n`);
   };
 
   const input = JSON.parse((await readStdin(500)) || '{}') as PromptHookInput;
@@ -44,6 +44,6 @@ async function main(): Promise<void> {
 setTimeout(() => process.exit(0), HARD_DEADLINE_MS).unref();
 main()
   .catch(err => {
-    if (process.env.SWARM_KG_DEBUG === '1') process.stderr.write(`[swarm-kg prompt hook] error: ${String(err)}\n`);
+    if (process.env.KG_DEBUG === '1') process.stderr.write(`[knowledge-graph prompt hook] error: ${String(err)}\n`);
   })
   .finally(() => process.exit(0));
