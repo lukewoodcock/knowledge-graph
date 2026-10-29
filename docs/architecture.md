@@ -34,6 +34,8 @@ flowchart LR
     AG["Agent answers,<br/>citing the notes"]
   end
 
+  RD["Reader: npm run ask<br/>tool loop on a local<br/>Ollama model"]
+
   CH -- "code capture" --> Q
   RM -- "memos" --> Q
   Q --> DOC & RES
@@ -42,7 +44,7 @@ flowchart LR
   LNK -- "write" --> N
   N -- "embed after the run" --> I
   I & N --> API
-  API -- "tool calls" --> MCP
+  API -- "tool calls" --> MCP & RD
   API -- "score ≥ 0.6, best 3,<br/>≤ 4,000 chars" --> CI
   MCP -- "agent chooses<br/>to recall" --> AG
   CI -- "reference-notes<br/>block on every prompt" --> AG
@@ -54,9 +56,12 @@ Linker) write it up as notes. A memo is written by the agent in the session
 itself (a learning, decision, todo, snippet or conversation), so it carries
 the reasoning, not just the diff; its run skips straight to linking.
 
-**Two read paths.** Recall over MCP is the agent choosing to search, open a
+**Three read paths.** Recall over MCP is the agent choosing to search, open a
 note and walk its links. Context injection is recall done for it: every
 prompt is searched and the few notes that clear the threshold are added.
+The Reader (`npm run ask`) is recall with no cloud model at all: a small
+tool loop on a local Ollama model, with the MCP server's three tools, for
+notes that must never leave the machine.
 
 ## Trade-offs
 
@@ -72,6 +77,7 @@ prompt is searched and the few notes that clear the threshold are added.
 | Recall interface | stdio MCP server, a thin client of the service | An HTTP MCP server; agents reading vault files directly | No second network listener; the service stays the only owner of the index |
 | Context injection | Synchronous hook, gives up after 1.5 s, off unless a project adds it | Async hook, on everywhere | Async context arrives one prompt late; extra tokens and invisible recall aren't worth it everywhere ([pros and cons](../examples/README.md#should-you-turn-it-on-for-a-project)) |
 | Search | Embeddings only | Keyword or hybrid search | Enough for the POC; hybrid can come later |
+| Local recall | The Reader: a small tool loop over Ollama's `/api/chat` ([ADR 0002](adr/0002-local-recall-is-a-small-purpose-built-loop.md)) | Claude Code pointed at Ollama | Claude Code's large prompt took 158 s on a local model and skipped the graph tools; the loop answers in about 14 s |
 
 ## Safety
 
@@ -79,9 +85,11 @@ prompt is searched and the few notes that clear the threshold are added.
   `127.0.0.1` by default and compose publishes its port, and Ollama's, on
   loopback only (with `docker run`, `-p 127.0.0.1:5678:5678`): nobody on the
   same wifi can send captures, read notes or use the models. The MCP server
-  speaks stdio and has no listener at all.
+  speaks stdio and has no listener at all. The Reader refuses to start unless
+  Ollama and the service are on loopback and the model is not an Ollama cloud
+  model, so nothing it reads leaves the machine.
 - **Recalled notes are data, not instructions.** Notes can hold text from
-  any captured file. Every MCP tool description and the `/recall` skill say so, and context
+  any captured file. Every MCP tool description, the Reader's system prompt and the `/recall` skill say so, and context
   injection wraps notes in a `<swarm-kg-reference-notes>` block that tells the
   agent not to follow them, with any copy of that tag inside a note escaped.
 - **A size cap on recalled text.** Context injection adds at most three notes
@@ -97,7 +105,7 @@ prompt is searched and the few notes that clear the threshold are added.
 
 ## Left out on purpose
 
-A reader agent with its own loop, automatic capture before `/compact`, secrets
+Summarising across many notes for broad questions, automatic capture before `/compact`, secrets
 in memos and a dataset source are in [docs/ideas.md](ideas.md). Also out:
 authentication, running anywhere but my machine, keyword search, and making
 it installable by others. The read side was built so a second source needs

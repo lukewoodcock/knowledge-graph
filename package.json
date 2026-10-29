@@ -9,6 +9,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "reindex": "node dist/reindex.js",
+    "ask": "node dist/ask.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

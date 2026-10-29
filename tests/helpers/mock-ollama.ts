@@ -41,7 +41,11 @@ export function embeddedTexts(state: MockOllamaState): string[] {
 }
 
 /** Replies to POST /api/embed with deterministic vectors, recording the call. */
-export function replyToEmbed(state: MockOllamaState, body: string, res: http.ServerResponse): void {
+export function replyToEmbed(
+  state: Pick<MockOllamaState, 'embedCalls'>,
+  body: string,
+  res: http.ServerResponse,
+): void {
   const parsed = JSON.parse(body || '{}');
   const input: string[] = Array.isArray(parsed.input) ? parsed.input : [parsed.input];
   state.embedCalls.push({ model: parsed.model, input });

@@ -4,7 +4,8 @@ The live demo of swarm-kg. Session A builds something in project A while the
 graph grows in Obsidian, and `/remember` saves the decision behind it. Then
 session B, in project B, asks about that work and gets an answer from project
 A's notes: first with context injection off (the agent chooses to search the
-graph), then on (the notes are already in its context).
+graph), then on (the notes are already in its context), and last from the
+Reader, a local model that answers with no cloud model at all.
 
 ```mermaid
 sequenceDiagram
@@ -13,6 +14,7 @@ sequenceDiagram
   participant V as Vault, in Obsidian
   participant M as MCP server
   participant B as Session B, project B
+  participant R as Reader, local model
 
   Note over A: 1. Claude builds the rate limiter
   A->>S: Capture hook (Stop) sends code captures
@@ -33,6 +35,8 @@ sequenceDiagram
   S-->>B: Best notes, added to the prompt
   B->>M: get_note only
   M->>S: Note
+  Note over S,R: 5. The same question, answered locally
+  R->>S: search, note
 ```
 
 **Success bar:** under ten minutes, and at least one question in project B
@@ -63,6 +67,7 @@ The kit lives in `demo/`:
    ```bash
    npm ci && npm run build
    ollama pull qwen3.5:9b && ollama pull bge-large
+   ollama pull qwen3.6:35b-a3b-coding   # the Reader's model, for step 5 (22 GB)
    ```
 
 2. Create the demo somewhere outside your real projects and vault, e.g.
@@ -182,7 +187,13 @@ and to the other two memos.
 Open the decision memo in Obsidian: context paragraph, choice, rejected
 alternatives, consequences.
 
-`/exit`.
+`/exit`. Then, in the same terminal, start loading the Reader's model for
+step 5 in the background. The captures are done, so it can't slow them, and
+steps 3 and 4 don't use the service's chat model:
+
+```bash
+curl -s localhost:11434/api/generate -d '{"model":"qwen3.6:35b-a3b-coding","prompt":"hi","stream":false,"think":false}' >/dev/null &
+```
 
 ### 3. Session B, context injection off: the agent chooses to search (about 30 s)
 
@@ -224,7 +235,30 @@ Press Ctrl+O to show the hook's added context in the transcript.
 Talking point: for and against injection (examples/README.md): recall without
 asking, at the price of tokens on every prompt and recall you don't see.
 
-### 5. Close (30 s)
+### 5. The same question, answered by a local model (about 20 s)
+
+In the project B terminal:
+
+```bash
+node /ABSOLUTE/PATH/TO/swarm-kg/dist/ask.js "Before I add rate limiting to POST /notes here: how did I rate-limit link creation in shortlinks, and why that approach?"
+```
+
+Expected (rehearsal: 14 s warm, 33 s if the model had to load): stderr shows
+each step, typically one `search_notes` (with `kind: "decision"`), then
+`get_note` on the new decision memo and its companion, then the answer; stdout
+gives the same facts as step 3 (5-token bucket per IP, one token every 12 s,
+429 with `Retry-After`, a Map swept after 10 minutes; token bucket over a
+fixed window, IP for want of API keys, no Redis for one dependency-free
+process), cited inline, ending in **Notes used**.
+
+Talking point: nothing here leaves the machine. The Reader is a small tool
+loop over Ollama's API with the same three tools as the MCP server; it
+refuses a non-loopback URL or an Ollama cloud model, so the graph can hold
+notes you'd never send to a cloud model. Pointing Claude Code itself at the
+local model took 158 s and skipped the graph, which is why it's a
+purpose-built loop.
+
+### 6. Close (30 s)
 
 Graph view: the new notes from project A, linked to the seed. One vault,
 every project; the notes are plain markdown and the index rebuilds from them.
@@ -241,6 +275,9 @@ every project; the notes are plain markdown and the index rebuilds from them.
 | Live notes never arrived (Ollama down, runs failing) | Ask the **fallback question**, answered from the seed alone: `Before I add rate limiting to POST /notes here: how have I rate-limited APIs in my other projects, and why that approach? Don't change any files yet.` Rehearsal: cites the billing-service token-bucket decision and the fixed-window learning, and the open shortlinks todo |
 | Injection adds nothing in step 4 | The agent searches instead and gives the same answer, so carry on. The causes: the service took over 1.5 s (cold embedding model), nothing cleared 0.65, or Claude Code cancelled the hook as timed out while the session was starting (seen once in three tries on a loaded machine, though the hook alone takes a quarter of a second). To show injection, rerun the warm-up, `/exit`, start `claude` again and ask again |
 | In step 4 the agent still searches | Fine: show the injected block with Ctrl+O; the answer is the same |
+| Step 5 says the model is not pulled | `ollama pull qwen3.6:35b-a3b-coding` after the demo; now, `SWARM_KG_READER_MODEL=qwen3.5:9b` and ask again (about 30 s) |
+| Step 5 takes over 30 s | The model is loading (22 GB): talk over it. The warm-up after step 2 avoids it |
+| Step 5 says the service isn't reachable | `source demo.env` in that terminal, so `SWARM_KG_SERVICE_URL` points at the demo's port |
 | Anything else goes wrong | `demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"` and run the fallback question |
 
 ## Known issues
@@ -337,3 +374,13 @@ a second through steps 1 and 2:
 | 4, a third time | 16:42:29 | 30 s | Injected the same three notes; no search; same answer |
 
 Machine time from reset to the end of the first try at step 4: **6 min 9 s**.
+
+The Reader, 2026-10-29, `npm run ask` against a copy of the vault after a
+full run (project A's notes from 2026-10-28), on real Ollama
+(`qwen3.6:35b-a3b-coding`, bge-large), service on port 5697:
+
+| Question | Elapsed | Result |
+|----------|---------|--------|
+| The step 3 question, model not loaded | 32.7 s (first step 14.7 s, loading) | Two searches (the first with `kind: "memo"`, rejected as not a kind, so it retried with `type`), `get_note` × 2; correct answer citing the new decision memo and the IP-keying memo, the shortlinks todo and the X-Forwarded-For todo |
+| The same, model loaded | 13.6 s | One search (`kind: "decision"`), `get_note` × 2; the same correct, cited answer |
+| The fallback question | 18.7 s | One search, `get_note` × 4; correct answer citing the billing-service decision and fixed-window learning, the new shortlinks code note and the shortlinks todo |
