@@ -315,7 +315,7 @@ describe('Reader: recall answered by a local model', () => {
       const serviceUrl = await deadUrl();
 
       await expect(ask('Anything?', options(serviceUrl))).rejects.toThrow(
-        `The swarm-kg service is not reachable at ${serviceUrl}. Is it running?`,
+        `The knowledge-graph service is not reachable at ${serviceUrl}. Is it running?`,
       );
       expect(ollama.showRequests).toEqual([]);
       expect(ollama.chatRequests).toEqual([]);
@@ -342,9 +342,9 @@ describe('Reader: recall answered by a local model', () => {
       ];
 
       const run = await runAsk(['Which', 'caching did we choose?'], {
-        SWARM_KG_SERVICE_URL: serviceUrl,
-        SWARM_KG_READER_OLLAMA_URL: ollamaUrl,
-        SWARM_KG_READER_MODEL: 'mock-reader',
+        KG_SERVICE_URL: serviceUrl,
+        KG_READER_OLLAMA_URL: ollamaUrl,
+        KG_READER_MODEL: 'mock-reader',
       });
 
       expect(run.code).toBe(0);
@@ -375,7 +375,7 @@ describe('Reader: recall answered by a local model', () => {
     }, 15_000);
 
     test("when it can't answer it says why on stderr, with no stack trace, and exits 1", async () => {
-      const run = await runAsk(['Anything?'], { SWARM_KG_READER_OLLAMA_URL: 'http://192.168.1.20:11434' });
+      const run = await runAsk(['Anything?'], { KG_READER_OLLAMA_URL: 'http://192.168.1.20:11434' });
 
       expect(run.code).toBe(1);
       expect(run.stdout).toBe('');

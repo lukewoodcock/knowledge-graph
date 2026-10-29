@@ -2,7 +2,7 @@
 name: recall
 description: Recall past work from the knowledge graph, the notes captured from earlier Claude Code sessions in every project. Use when the request leans on past work ("how did I...", "have I done this before"), an earlier decision or its reasoning, a saved snippet or command, or open todos.
 argument-hint: "[question]"
-allowed-tools: mcp__swarm-kg__search_notes mcp__swarm-kg__get_note mcp__swarm-kg__related_notes
+allowed-tools: mcp__knowledge-graph__search_notes mcp__knowledge-graph__get_note mcp__knowledge-graph__related_notes
 ---
 
 # Recall
@@ -19,7 +19,7 @@ When the question above is empty, recall for what the user is asking right now.
 
 ## Notes already in your context
 
-With context injection on, the prompt arrives with a `<swarm-kg-reference-notes>` block: excerpts of the notes that best match it, each headed with the note's name and project. Start from those. When the excerpts answer the question, skip the search: open each of them that you use with `get_note` (excerpts are cut short) and go to step 3. Search only for what they don't cover.
+With context injection on, the prompt arrives with a `<knowledge-graph-reference-notes>` block: excerpts of the notes that best match it, each headed with the note's name and project. Start from those. When the excerpts answer the question, skip the search: open each of them that you use with `get_note` (excerpts are cut short) and go to step 3. Search only for what they don't cover.
 
 ## Steps
 
@@ -31,4 +31,4 @@ With context injection on, the prompt arrives with a `<swarm-kg-reference-notes>
 
 When the graph has nothing on the question, say so plainly and name the searches you ran.
 
-When a tool says the swarm-kg service is not reachable, tell the user to start the service, and answer nothing from the graph.
+When a tool says the knowledge-graph service is not reachable, tell the user to start the service, and answer nothing from the graph.

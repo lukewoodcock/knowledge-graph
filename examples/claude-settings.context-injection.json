@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node /ABSOLUTE/PATH/TO/swarm-kg/dist/hook/prompt.js",
+            "command": "node /ABSOLUTE/PATH/TO/knowledge-graph/dist/hook/prompt.js",
             "timeout": 5
           }
         ]

@@ -1,5 +1,5 @@
 {
-  "name": "swarm-kg",
+  "name": "knowledge-graph",
   "version": "1.0.0",
   "description": "Local AI agent swarm knowledge graph — TypeScript service + Ollama, writing to an Obsidian vault",
   "private": true,

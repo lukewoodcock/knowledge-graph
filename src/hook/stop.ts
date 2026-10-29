@@ -1,5 +1,5 @@
 // Claude Code Stop hook: POSTs the files Claude changed this turn to the
-// swarm-kg webhook. Run as `node dist/hook/stop.js` with the hook JSON on stdin.
+// knowledge-graph webhook. Run as `node dist/hook/stop.js` with the hook JSON on stdin.
 //
 // It must never get in Claude's way: it prints nothing to stdout, always
 // exits 0 (exit 2 would stop Claude from stopping), and gives up after a
@@ -16,7 +16,7 @@ async function main(): Promise<void> {
   const cfg = loadHookConfig();
   // stderr only, and only when asked: stdout on a Stop hook can be read as a decision.
   const log = (msg: string): void => {
-    if (cfg.debug) process.stderr.write(`[swarm-kg hook] ${msg}\n`);
+    if (cfg.debug) process.stderr.write(`[knowledge-graph hook] ${msg}\n`);
   };
 
   const input = JSON.parse((await readStdin(1000)) || '{}') as StopHookInput;
@@ -66,6 +66,6 @@ async function main(): Promise<void> {
 setTimeout(() => process.exit(0), HARD_DEADLINE_MS).unref();
 main()
   .catch(err => {
-    if (process.env.SWARM_KG_DEBUG === '1') process.stderr.write(`[swarm-kg hook] error: ${String(err)}\n`);
+    if (process.env.KG_DEBUG === '1') process.stderr.write(`[knowledge-graph hook] error: ${String(err)}\n`);
   })
   .finally(() => process.exit(0));

@@ -9,13 +9,13 @@
 # otherwise the service builds it when it next starts.
 #
 # It only ever wipes a folder that is empty, missing, or marked as a demo
-# vault by an earlier reset (.swarm-kg-demo-vault), so it can't touch a real
+# vault by an earlier reset (.knowledge-graph-demo-vault), so it can't touch a real
 # vault. Don't run it while a capture is still being processed.
 set -euo pipefail
 
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(dirname "$DEMO")"
-MARKER=".swarm-kg-demo-vault"
+MARKER=".knowledge-graph-demo-vault"
 
 usage() { echo "usage: demo/reset.sh <vault-dir> [--url <service-url>]" >&2; exit 1; }
 [ $# -ge 1 ] || usage
@@ -49,4 +49,4 @@ if ! curl -s -o /dev/null --max-time 2 "$URL/webhook/knowledge-graph/runs/ping";
   echo "reset: no service at $URL; the index is rebuilt when the service starts"
   exit 0
 fi
-SWARM_KG_SERVICE_URL="$URL" node "$REPO/dist/reindex.js"
+KG_SERVICE_URL="$URL" node "$REPO/dist/reindex.js"

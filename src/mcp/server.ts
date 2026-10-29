@@ -13,7 +13,7 @@ import { GRAPH_TOOLS, GRAPH_TOOL_NAMES, callGraphTool } from '../graph-tools';
 
 /** Builds the MCP server; `baseUrl` is the service's base URL, as serviceUrl() gives it. */
 export function buildMcpServer(baseUrl: string): McpServer {
-  const server = new McpServer({ name: 'swarm-kg', version: '1.0.0' });
+  const server = new McpServer({ name: 'knowledge-graph', version: '1.0.0' });
 
   for (const name of GRAPH_TOOL_NAMES) {
     const { description, inputSchema } = GRAPH_TOOLS[name];
@@ -29,7 +29,7 @@ export function buildMcpServer(baseUrl: string): McpServer {
 if (require.main === module) {
   const server = buildMcpServer(serviceUrl());
   server.connect(new StdioServerTransport()).catch(err => {
-    console.error(`swarm-kg mcp: ${String(err)}`);
+    console.error(`knowledge-graph mcp: ${String(err)}`);
     process.exit(1);
   });
 }

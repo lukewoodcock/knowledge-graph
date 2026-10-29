@@ -1,4 +1,4 @@
-# swarm-kg
+# knowledge-graph
 
 A personal knowledge graph that grows from your coding sessions and that agents in other sessions can read from.
 

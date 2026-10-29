@@ -102,12 +102,12 @@ async function fetchJson(baseUrl: string, url: string, init?: RequestInit): Prom
   try {
     res = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
   } catch (err) {
-    return toolError(`The swarm-kg service is not reachable at ${baseUrl}. Is it running? (${errorMessage(err)})`);
+    return toolError(`The knowledge-graph service is not reachable at ${baseUrl}. Is it running? (${errorMessage(err)})`);
   }
   const body = (await res.json().catch(() => undefined)) as { error?: unknown } | undefined;
   if (!res.ok) {
     const detail = typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`;
-    return toolError(`The swarm-kg service could not answer: ${detail}`);
+    return toolError(`The knowledge-graph service could not answer: ${detail}`);
   }
   return { text: JSON.stringify(body, null, 2), isError: false, body };
 }

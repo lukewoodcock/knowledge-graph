@@ -2,7 +2,7 @@
   "name": "shortlinks",
   "version": "0.1.0",
   "private": true,
-  "description": "A tiny dependency-free URL shortener (swarm-kg demo project A)",
+  "description": "A tiny dependency-free URL shortener (knowledge-graph demo project A)",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js"

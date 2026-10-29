@@ -1,4 +1,4 @@
-# Local AI agent swarm knowledge graph: Ollama + the swarm-kg service.
+# Local AI agent swarm knowledge graph: Ollama + the knowledge-graph service.
 # Works with Docker and Podman (podman compose up -d).
 
 volumes:
@@ -28,9 +28,9 @@ services:
       retries: 5
       start_period: 30s
 
-  swarm-kg:
+  knowledge-graph:
     build: .
-    container_name: swarm-kg
+    container_name: knowledge-graph
     restart: unless-stopped
     depends_on:
       ollama:

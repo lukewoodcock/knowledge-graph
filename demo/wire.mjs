@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Writes a demo project's swarm-kg config from the files in examples/, with
+// Writes a demo project's knowledge-graph config from the files in examples/, with
 // the placeholders filled in. Used by setup.sh and injection.sh.
 //
 //   node demo/wire.mjs project   <project-dir> <vault-dir> <service-url>
@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const EXAMPLES = path.join(REPO, 'examples');
-const PLACEHOLDER = '/ABSOLUTE/PATH/TO/swarm-kg';
+const PLACEHOLDER = '/ABSOLUTE/PATH/TO/knowledge-graph';
 
 const readJson = async p => JSON.parse(await fs.readFile(p, 'utf8'));
 const writeJson = async (p, v) => {
@@ -20,23 +20,23 @@ const writeJson = async (p, v) => {
 
 /** The capture hook, recall (MCP server and /recall) and /remember, from examples/. */
 async function wireProject(projectDir, vaultDir, serviceUrl) {
-  // .mcp.json: the swarm-kg MCP server.
+  // .mcp.json: the knowledge-graph MCP server.
   const mcp = await readJson(path.join(EXAMPLES, 'mcp.json'));
-  const server = mcp.mcpServers['swarm-kg'];
+  const server = mcp.mcpServers['knowledge-graph'];
   server.args = server.args.map(a => a.replace(PLACEHOLDER, REPO));
-  server.env.SWARM_KG_SERVICE_URL = serviceUrl;
+  server.env.KG_SERVICE_URL = serviceUrl;
   await writeJson(path.join(projectDir, '.mcp.json'), mcp);
 
   // .claude/settings.json: permissions, the MCP server, the capture hook.
   // `env` reaches the Bash tool, so /remember's command finds the service too.
   const settings = await readJson(path.join(EXAMPLES, 'claude-settings.json'));
-  settings.env = { SWARM_KG_SERVICE_URL: serviceUrl };
+  settings.env = { KG_SERVICE_URL: serviceUrl };
   for (const entry of settings.hooks.Stop) {
     for (const hook of entry.hooks) {
       hook.command = hook.command
         .replace('/ABSOLUTE/PATH/TO/vault', vaultDir)
         .replace(PLACEHOLDER, REPO)
-        .replace(/^/, `SWARM_KG_URL=${serviceUrl}/webhook/knowledge-graph/trigger `);
+        .replace(/^/, `KG_URL=${serviceUrl}/webhook/knowledge-graph/trigger `);
     }
   }
   await writeJson(path.join(projectDir, '.claude', 'settings.json'), settings);
@@ -54,11 +54,11 @@ async function wireProject(projectDir, vaultDir, serviceUrl) {
 async function toggleInjection(projectDir, state, minScore) {
   const settingsPath = path.join(projectDir, '.claude', 'settings.json');
   const settings = await readJson(settingsPath);
-  const serviceUrl = settings.env?.SWARM_KG_SERVICE_URL ?? 'http://127.0.0.1:5678';
+  const serviceUrl = settings.env?.KG_SERVICE_URL ?? 'http://127.0.0.1:5678';
   settings.hooks ??= {};
   if (state === 'on') {
     const example = await readJson(path.join(EXAMPLES, 'claude-settings.context-injection.json'));
-    const vars = [`SWARM_KG_SERVICE_URL=${serviceUrl}`, ...(minScore ? [`SWARM_KG_MIN_SCORE=${minScore}`] : [])];
+    const vars = [`KG_SERVICE_URL=${serviceUrl}`, ...(minScore ? [`KG_MIN_SCORE=${minScore}`] : [])];
     for (const entry of example.hooks.UserPromptSubmit) {
       for (const hook of entry.hooks) hook.command = `${vars.join(' ')} ${hook.command.replace(PLACEHOLDER, REPO)}`;
     }

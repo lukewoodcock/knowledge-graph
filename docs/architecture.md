@@ -1,6 +1,6 @@
 # Architecture
 
-swarm-kg turns Claude Code sessions into a graph of linked markdown notes, and
+knowledge-graph turns Claude Code sessions into a graph of linked markdown notes, and
 lets an agent in any other session recall them. Everything runs on one
 machine: Ollama, the service, the vault, the hooks and the MCP server.
 
@@ -11,7 +11,7 @@ flowchart LR
     RM["/remember skill<br/>the session's agent<br/>writes memos"]
   end
 
-  subgraph W["swarm-kg service, 127.0.0.1 only: runs"]
+  subgraph W["knowledge-graph service, 127.0.0.1 only: runs"]
     Q["Capture queue<br/>one run at a time"]
     DOC["Documenter"]
     RES["Researcher<br/>off by default"]
@@ -21,10 +21,10 @@ flowchart LR
 
   subgraph V["Vault: markdown, open in Obsidian"]
     N["Notes and links<br/>code/ memos/ research/<br/>session log"]
-    I[".swarm-kg/index.json<br/>each section embedded<br/>with a context prefix;<br/>rebuildable"]
+    I[".knowledge-graph/index.json<br/>each section embedded<br/>with a context prefix;<br/>rebuildable"]
   end
 
-  subgraph R["swarm-kg service: read API"]
+  subgraph R["knowledge-graph service: read API"]
     API["search, note, related"]
   end
 
@@ -90,7 +90,7 @@ notes that must never leave the machine.
   model, so nothing it reads leaves the machine.
 - **Recalled notes are data, not instructions.** Notes can hold text from
   any captured file. Every MCP tool description, the Reader's system prompt and the `/recall` skill say so, and context
-  injection wraps notes in a `<swarm-kg-reference-notes>` block that tells the
+  injection wraps notes in a `<knowledge-graph-reference-notes>` block that tells the
   agent not to follow them, with any copy of that tag inside a note escaped.
 - **A size cap on recalled text.** Context injection adds at most three notes
   and 4,000 characters per prompt, never more than 9,000. Opening a note

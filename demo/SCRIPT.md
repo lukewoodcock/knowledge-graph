@@ -1,6 +1,6 @@
 # Demo script
 
-The live demo of swarm-kg. Session A builds something in project A while the
+The live demo of knowledge-graph. Session A builds something in project A while the
 graph grows in Obsidian, and `/remember` saves the decision behind it. Then
 session B, in project B, asks about that work and gets an answer from project
 A's notes: first with context injection off (the agent chooses to search the
@@ -10,7 +10,7 @@ Reader, a local model that answers with no cloud model at all.
 ```mermaid
 sequenceDiagram
   participant A as Session A, project A
-  participant S as swarm-kg service
+  participant S as knowledge-graph service
   participant V as Vault, in Obsidian
   participant M as MCP server
   participant B as Session B, project B
@@ -62,7 +62,7 @@ The kit lives in `demo/`:
 
 ## Once, before the day (15 minutes)
 
-1. Build swarm-kg and pull the models:
+1. Build knowledge-graph and pull the models:
 
    ```bash
    npm ci && npm run build
@@ -71,12 +71,12 @@ The kit lives in `demo/`:
    ```
 
 2. Create the demo somewhere outside your real projects and vault, e.g.
-   `~/swarm-kg-demo`. Use port 5678 unless your own swarm-kg service runs
+   `~/knowledge-graph-demo`. Use port 5678 unless your own knowledge-graph service runs
    there; then pick another (`--port 5679`).
 
    ```bash
-   demo/setup.sh ~/swarm-kg-demo
-   source ~/swarm-kg-demo/demo.env
+   demo/setup.sh ~/knowledge-graph-demo
+   source ~/knowledge-graph-demo/demo.env
    ```
 
 3. **Trust both projects in an interactive session.** Claude Code ignores a
@@ -88,9 +88,9 @@ The kit lives in `demo/`:
    cd "$DEMO_A" && claude      # then the same in "$DEMO_B"
    ```
 
-   - Accept the trust dialog ("Yes, proceed"), and approve the `swarm-kg`
+   - Accept the trust dialog ("Yes, proceed"), and approve the `knowledge-graph`
      MCP server if asked.
-   - `/mcp` shows `swarm-kg` connected; `/hooks` shows the `Stop` hook (and
+   - `/mcp` shows `knowledge-graph` connected; `/hooks` shows the `Stop` hook (and
      in project B, after `demo/injection.sh "$DEMO_B" on`, `UserPromptSubmit`).
    - `/exit`.
 
@@ -105,7 +105,7 @@ The kit lives in `demo/`:
 ## Before each run (3 minutes)
 
 Lay out four windows: Obsidian's graph view, the service console, a terminal
-in project A, a terminal in project B. `source ~/swarm-kg-demo/demo.env` in
+in project A, a terminal in project B. `source ~/knowledge-graph-demo/demo.env` in
 every terminal.
 
 1. Start Ollama, then the service in its own terminal, and leave it visible:
@@ -113,27 +113,27 @@ every terminal.
 
    ```bash
    demo/service.sh "$DEMO_VAULT" 5678
-   # swarm-kg listening on 127.0.0.1:5678 ... index: 13 notes, ...
+   # knowledge-graph listening on 127.0.0.1:5678 ... index: 13 notes, ...
    ```
 
 2. Reset the vault and switch context injection off in project B:
 
    ```bash
-   demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"
+   demo/reset.sh "$DEMO_VAULT" --url "$KG_SERVICE_URL"
    # reset: ... holds the seed again (13 notes)
    # reindex complete: 13 notes, 13 embedded
    demo/injection.sh "$DEMO_B" off
    ```
 
    Run the reset before each run and never while a run is in progress. To
-   reset the demo projects as well, `demo/setup.sh ~/swarm-kg-demo --force`
+   reset the demo projects as well, `demo/setup.sh ~/knowledge-graph-demo --force`
    (then repeat the trust step, since the folders are new).
 
 3. Warm the models so the first run isn't slow:
 
    ```bash
    curl -s localhost:11434/api/generate -d '{"model":"qwen3.5:9b","prompt":"hi","stream":false}' >/dev/null
-   curl -s -X POST "$SWARM_KG_SERVICE_URL/webhook/knowledge-graph/search" -H 'Content-Type: application/json' -d '{"query":"warm up"}' >/dev/null
+   curl -s -X POST "$KG_SERVICE_URL/webhook/knowledge-graph/search" -H 'Content-Type: application/json' -d '{"query":"warm up"}' >/dev/null
    ```
 
 ## The demo (about 8 minutes)
@@ -227,7 +227,7 @@ claude
 Paste the same prompt as step 3. The `UserPromptSubmit` hook searches the
 graph with the prompt and adds the best three notes above 0.65 (rehearsal: the
 shortlinks todo 0.80, the new decision memo 0.77, the new verify todo 0.77) as
-a `<swarm-kg-reference-notes>` block. Expected (rehearsal: 35 s): the agent
+a `<knowledge-graph-reference-notes>` block. Expected (rehearsal: 35 s): the agent
 goes straight to `get_note` on the injected notes, with no `search_notes`
 call, and gives the same cited answer, plus how it fits notes-api's code.
 Press Ctrl+O to show the hook's added context in the transcript.
@@ -240,7 +240,7 @@ asking, at the price of tokens on every prompt and recall you don't see.
 In the project B terminal:
 
 ```bash
-node /ABSOLUTE/PATH/TO/swarm-kg/dist/ask.js "Before I add rate limiting to POST /notes here: how did I rate-limit link creation in shortlinks, and why that approach?"
+node /ABSOLUTE/PATH/TO/knowledge-graph/dist/ask.js "Before I add rate limiting to POST /notes here: how did I rate-limit link creation in shortlinks, and why that approach?"
 ```
 
 Expected (rehearsal: 14 s warm, 33 s if the model had to load): stderr shows
@@ -271,14 +271,14 @@ every project; the notes are plain markdown and the index rebuilds from them.
 | `/remember` says the service isn't running | Start it (`demo/service.sh`) and `/remember` again |
 | `/remember` exits 2 (still queued) | Captures are slow today; run the `--run <id>` command it printed |
 | Session B doesn't use recall on its own | Ask explicitly: `/recall how did I rate-limit link creation in shortlinks, and why?` |
-| `swarm-kg` tools are denied or missing | `/mcp` and approve the server, or ask with `/recall …`, whose skill pre-approves the three tools |
+| `knowledge-graph` tools are denied or missing | `/mcp` and approve the server, or ask with `/recall …`, whose skill pre-approves the three tools |
 | Live notes never arrived (Ollama down, runs failing) | Ask the **fallback question**, answered from the seed alone: `Before I add rate limiting to POST /notes here: how have I rate-limited APIs in my other projects, and why that approach? Don't change any files yet.` Rehearsal: cites the billing-service token-bucket decision and the fixed-window learning, and the open shortlinks todo |
 | Injection adds nothing in step 4 | The agent searches instead and gives the same answer, so carry on. The causes: the service took over 1.5 s (cold embedding model), nothing cleared 0.65, or Claude Code cancelled the hook as timed out while the session was starting (seen once in three tries on a loaded machine, though the hook alone takes a quarter of a second). To show injection, rerun the warm-up, `/exit`, start `claude` again and ask again |
 | In step 4 the agent still searches | Fine: show the injected block with Ctrl+O; the answer is the same |
-| Step 5 says the model is not pulled | `ollama pull qwen3.6:35b-a3b-coding` after the demo; now, `SWARM_KG_READER_MODEL=qwen3.5:9b` and ask again (about 30 s) |
+| Step 5 says the model is not pulled | `ollama pull qwen3.6:35b-a3b-coding` after the demo; now, `KG_READER_MODEL=qwen3.5:9b` and ask again (about 30 s) |
 | Step 5 takes over 30 s | The model is loading (22 GB): talk over it. The warm-up after step 2 avoids it |
-| Step 5 says the service isn't reachable | `source demo.env` in that terminal, so `SWARM_KG_SERVICE_URL` points at the demo's port |
-| Anything else goes wrong | `demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"` and run the fallback question |
+| Step 5 says the service isn't reachable | `source demo.env` in that terminal, so `KG_SERVICE_URL` points at the demo's port |
+| Anything else goes wrong | `demo/reset.sh "$DEMO_VAULT" --url "$KG_SERVICE_URL"` and run the fallback question |
 
 ## Known issues
 

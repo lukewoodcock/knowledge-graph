@@ -39,17 +39,17 @@ async function main(): Promise<number> {
   }
 
   const env = process.env;
-  const model = env.SWARM_KG_READER_MODEL || DEFAULT_MODEL;
+  const model = env.KG_READER_MODEL || DEFAULT_MODEL;
   const started = Date.now();
   let steps = 0;
-  console.error(`ask: ${model} on ${env.SWARM_KG_READER_OLLAMA_URL || DEFAULT_OLLAMA_URL}`);
+  console.error(`ask: ${model} on ${env.KG_READER_OLLAMA_URL || DEFAULT_OLLAMA_URL}`);
   try {
     const result = await ask(question, {
       serviceUrl: serviceUrl(env),
-      ollamaUrl: (env.SWARM_KG_READER_OLLAMA_URL || DEFAULT_OLLAMA_URL).replace(/\/+$/, ''),
+      ollamaUrl: (env.KG_READER_OLLAMA_URL || DEFAULT_OLLAMA_URL).replace(/\/+$/, ''),
       model,
-      maxSteps: positiveInt(env.SWARM_KG_READER_MAX_STEPS, DEFAULT_MAX_STEPS),
-      ollamaTimeoutMs: positiveInt(env.SWARM_KG_READER_TIMEOUT_MS, DEFAULT_OLLAMA_TIMEOUT_MS),
+      maxSteps: positiveInt(env.KG_READER_MAX_STEPS, DEFAULT_MAX_STEPS),
+      ollamaTimeoutMs: positiveInt(env.KG_READER_TIMEOUT_MS, DEFAULT_OLLAMA_TIMEOUT_MS),
       onStep: s => {
         steps = s.step;
         console.error(formatStep(s));

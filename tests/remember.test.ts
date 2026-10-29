@@ -69,7 +69,7 @@ describe('remember command', () => {
   /** Runs the command and collects what it printed. */
   async function run(argv: string[], stdin: string, serviceUrl: string, env: NodeJS.ProcessEnv = {}) {
     const lines: string[] = [];
-    const code = await remember(argv, stdin, { SWARM_KG_SERVICE_URL: serviceUrl, ...env }, l => lines.push(l), {
+    const code = await remember(argv, stdin, { KG_SERVICE_URL: serviceUrl, ...env }, l => lines.push(l), {
       pollMs: 5,
     });
     return { code, output: lines.join('\n') };
@@ -150,7 +150,7 @@ describe('remember command', () => {
     );
 
     expect(code).toBe(1);
-    expect(output).toContain('The swarm-kg service is not reachable at http://127.0.0.1:9');
+    expect(output).toContain('The knowledge-graph service is not reachable at http://127.0.0.1:9');
   });
 
   test('fails clearly when stdin is not JSON, before sending anything', async () => {
@@ -218,7 +218,7 @@ describe('remember command', () => {
     const url = await startService();
     const argv = ['--session', 'sess-1', '--project-dir', projectDir];
 
-    const first = await run(argv, JSON.stringify(DECISION), url, { SWARM_KG_REMEMBER_WAIT_MS: '20' });
+    const first = await run(argv, JSON.stringify(DECISION), url, { KG_REMEMBER_WAIT_MS: '20' });
 
     expect(first.code).toBe(2);
     expect(first.output).toContain('still running');
@@ -231,14 +231,14 @@ describe('remember command', () => {
     expect(later.output).toContain('Use_write-through_caching (decision)');
   });
 
-  test('runs as `node dist/remember.js` with the memos on stdin, reading the service from SWARM_KG_SERVICE_URL', async () => {
+  test('runs as `node dist/remember.js` with the memos on stdin, reading the service from KG_SERVICE_URL', async () => {
     const url = await startService();
     // tsx runs the entrypoint as node would run the built file, without a build.
     const child = spawn(
       process.execPath,
       [path.join(ROOT, 'node_modules', 'tsx', 'dist', 'cli.mjs'), path.join(ROOT, 'src', 'remember.ts'),
         '--session', 'sess-1', '--project-dir', projectDir],
-      { env: { ...process.env, SWARM_KG_SERVICE_URL: url } },
+      { env: { ...process.env, KG_SERVICE_URL: url } },
     );
     let stdout = '';
     child.stdout.on('data', c => (stdout += c));

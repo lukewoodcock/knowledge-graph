@@ -6,11 +6,11 @@ order. The talking points and the rehearsal timings are in
 [diagram in SCRIPT.md](SCRIPT.md#demo-script) shows the demo at a glance.
 
 It runs natively, as every rehearsal did: the Ollama app on the Mac's GPU, and
-the swarm-kg service from `demo/service.sh` in its own terminal. Podman isn't
+the knowledge-graph service from `demo/service.sh` in its own terminal. Podman isn't
 used: a container on macOS can't reach the GPU.
 
 The repository is `~/Personal/knowledge-graph`, and the demo lives in
-`~/swarm-kg-demo`.
+`~/knowledge-graph-demo`.
 
 ## Part 1: once, before the day (about 20 minutes)
 
@@ -49,12 +49,12 @@ Done when all three model names print. If one is missing:
 
 ```bash
 cd ~/Personal/knowledge-graph
-demo/setup.sh ~/swarm-kg-demo
+demo/setup.sh ~/knowledge-graph-demo
 ```
 
-This makes `~/swarm-kg-demo/shortlinks` (project A),
-`~/swarm-kg-demo/notes-api` (project B), `~/swarm-kg-demo/vault` and
-`~/swarm-kg-demo/demo.env`. It ends with `setup: done.`
+This makes `~/knowledge-graph-demo/shortlinks` (project A),
+`~/knowledge-graph-demo/notes-api` (project B), `~/knowledge-graph-demo/vault` and
+`~/knowledge-graph-demo/demo.env`. It ends with `setup: done.`
 
 ### 1.5 Start the service
 
@@ -62,11 +62,11 @@ In a new terminal, which becomes the **service terminal**:
 
 ```bash
 cd ~/Personal/knowledge-graph
-source ~/swarm-kg-demo/demo.env
+source ~/knowledge-graph-demo/demo.env
 demo/service.sh "$DEMO_VAULT" 5678
 ```
 
-Done when it prints `swarm-kg listening on 127.0.0.1:5678` and
+Done when it prints `knowledge-graph listening on 127.0.0.1:5678` and
 `index: 13 notes, ...`. Leave it running.
 
 ### 1.6 Trust both projects
@@ -75,14 +75,14 @@ Claude Code ignores a project's settings until you trust the folder. In
 another terminal:
 
 ```bash
-source ~/swarm-kg-demo/demo.env
+source ~/knowledge-graph-demo/demo.env
 ~/Personal/knowledge-graph/demo/injection.sh "$DEMO_B" on
 cd "$DEMO_A" && claude
 ```
 
-1. Accept the trust dialog ("Yes, proceed"). Approve the `swarm-kg` MCP server
+1. Accept the trust dialog ("Yes, proceed"). Approve the `knowledge-graph` MCP server
    if asked.
-2. Type `/mcp`: `swarm-kg` shows as connected.
+2. Type `/mcp`: `knowledge-graph` shows as connected.
 3. Type `/hooks`: the `Stop` hook is listed.
 4. Type `/exit`.
 
@@ -98,7 +98,7 @@ Do steps 1 to 4 again. In project B, `/hooks` also lists `UserPromptSubmit`
 ### 1.7 Open the vault in Obsidian
 
 1. Open Obsidian, choose **Open folder as vault**, and pick
-   `~/swarm-kg-demo/vault`. Trust the vault's author if asked.
+   `~/knowledge-graph-demo/vault`. Trust the vault's author if asked.
 2. Open the graph view (the graph icon in the left ribbon, or Cmd+G).
    Notes are coloured by project: shortlinks blue, notes-api orange,
    billing-service grey.
@@ -114,10 +114,10 @@ Do Part 2 and Part 3 once on your own.
 
 | Window | What |
 |--------|------|
-| Obsidian | The graph view of `~/swarm-kg-demo/vault` |
+| Obsidian | The graph view of `~/knowledge-graph-demo/vault` |
 | Terminal 1 | The service terminal |
-| Terminal 2 | Project A: `source ~/swarm-kg-demo/demo.env && cd "$DEMO_A"` |
-| Terminal 3 | Project B: `source ~/swarm-kg-demo/demo.env && cd "$DEMO_B"` |
+| Terminal 2 | Project A: `source ~/knowledge-graph-demo/demo.env && cd "$DEMO_A"` |
+| Terminal 3 | Project B: `source ~/knowledge-graph-demo/demo.env && cd "$DEMO_B"` |
 
 Close heavy apps: a loaded machine makes the captures slow. Quit anything else
 that uses the local Ollama, such as an IDE's AI assistant (IntelliJ with
@@ -136,7 +136,7 @@ In terminal 1 (skip if the service is still running from Part 1):
 
 ```bash
 cd ~/Personal/knowledge-graph
-source ~/swarm-kg-demo/demo.env
+source ~/knowledge-graph-demo/demo.env
 demo/service.sh "$DEMO_VAULT" 5678
 ```
 
@@ -145,7 +145,7 @@ demo/service.sh "$DEMO_VAULT" 5678
 In terminal 3:
 
 ```bash
-~/Personal/knowledge-graph/demo/reset.sh "$DEMO_VAULT" --url "$SWARM_KG_SERVICE_URL"
+~/Personal/knowledge-graph/demo/reset.sh "$DEMO_VAULT" --url "$KG_SERVICE_URL"
 ~/Personal/knowledge-graph/demo/injection.sh "$DEMO_B" off
 ```
 
@@ -158,7 +158,7 @@ Also in terminal 3:
 
 ```bash
 curl -s localhost:11434/api/generate -d '{"model":"qwen3.5:9b","prompt":"hi","stream":false,"think":false}' >/dev/null
-curl -s -X POST "$SWARM_KG_SERVICE_URL/webhook/knowledge-graph/search" -H 'Content-Type: application/json' -d '{"query":"warm up"}' >/dev/null
+curl -s -X POST "$KG_SERVICE_URL/webhook/knowledge-graph/search" -H 'Content-Type: application/json' -d '{"query":"warm up"}' >/dev/null
 ```
 
 Both return in a few seconds with no output.
@@ -246,7 +246,7 @@ Paste the same prompt as step 3.
 
 - The hook adds the three best notes before Claude reads the prompt, so
   Claude goes straight to `get_note` with no search.
-- Press **Ctrl+O** to show the injected `<swarm-kg-reference-notes>` block.
+- Press **Ctrl+O** to show the injected `<knowledge-graph-reference-notes>` block.
 - If Claude searches anyway, the hook added nothing (it happened once in three
   rehearsal tries). The answer is the same, so carry on; to show injection,
   `/exit`, start `claude` again and paste the prompt again.
@@ -278,10 +278,10 @@ vault for every project, plain markdown, and the index rebuilds from the notes.
 | No `run ... complete` lines after step 1 | In session A, `/hooks` should list `Stop`. If not, the folder isn't trusted: redo 1.6. Carry on: `/remember` still writes memos |
 | `/remember` says the service isn't running | Start it (2.2) and `/remember` again |
 | Session B doesn't use recall on its own | Ask: `/recall how did I rate-limit link creation in shortlinks, and why?` |
-| `swarm-kg` tools are denied or missing | `/mcp` and approve the server |
+| `knowledge-graph` tools are denied or missing | `/mcp` and approve the server |
 | No live notes at all (Ollama down, runs failing) | Reset (2.3), then ask the fallback question in project B: `Before I add rate limiting to POST /notes here: how have I rate-limited APIs in my other projects, and why that approach? Don't change any files yet.` The seed alone answers it |
 
-| Step 5 says the model is not pulled | Ask again with `SWARM_KG_READER_MODEL=qwen3.5:9b` in front (about 30 s); pull the 35B model after the demo |
+| Step 5 says the model is not pulled | Ask again with `KG_READER_MODEL=qwen3.5:9b` in front (about 30 s); pull the 35B model after the demo |
 
 More cases are in [SCRIPT.md](SCRIPT.md#fallbacks).
 
@@ -289,5 +289,5 @@ More cases are in [SCRIPT.md](SCRIPT.md#fallbacks).
 
 1. In terminal 1, press Ctrl+C to stop the service.
 2. To run the demo again, start from Part 2. To recreate the projects from
-   scratch: `demo/setup.sh ~/swarm-kg-demo --force`, then redo the trust step
+   scratch: `demo/setup.sh ~/knowledge-graph-demo --force`, then redo the trust step
    (1.6), since the folders are new.

@@ -154,7 +154,7 @@ const CLOUD_MODEL = /[:-]cloud$/;
 function cloudModel(model: string): ReaderError {
   return new ReaderError(
     `${model} is an Ollama cloud model: it runs on Ollama's servers, so the notes would leave this machine. ` +
-      'Pick a local model with SWARM_KG_READER_MODEL.',
+      'Pick a local model with KG_READER_MODEL.',
   );
 }
 
@@ -164,9 +164,9 @@ async function checkService(serviceUrl: string): Promise<void> {
   try {
     ok = (await fetch(`${serviceUrl}/healthz`, { signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) })).ok;
   } catch (err) {
-    throw new ReaderError(`The swarm-kg service is not reachable at ${serviceUrl}. Is it running? (${errorMessage(err)})`);
+    throw new ReaderError(`The knowledge-graph service is not reachable at ${serviceUrl}. Is it running? (${errorMessage(err)})`);
   }
-  if (!ok) throw new ReaderError(`The swarm-kg service at ${serviceUrl} is not healthy.`);
+  if (!ok) throw new ReaderError(`The knowledge-graph service at ${serviceUrl} is not healthy.`);
 }
 
 /** Asks Ollama about the model: it must be pulled, local, and able to call tools. */
@@ -216,7 +216,7 @@ async function ollama(
   } catch (err) {
     if (err instanceof Error && err.name === 'TimeoutError') {
       throw new ReaderError(
-        `${options.model} took longer than ${timeoutMs} ms to reply. Raise SWARM_KG_READER_TIMEOUT_MS, or try a smaller model.`,
+        `${options.model} took longer than ${timeoutMs} ms to reply. Raise KG_READER_TIMEOUT_MS, or try a smaller model.`,
       );
     }
     throw new ReaderError(`Ollama is not reachable at ${options.ollamaUrl}. Is it running? (${errorMessage(err)})`);
