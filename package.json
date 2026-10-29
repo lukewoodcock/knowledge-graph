@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Local AI agent swarm knowledge graph — TypeScript service + Ollama, writing to an Obsidian vault",
   "private": true,
+  "license": "MIT",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
