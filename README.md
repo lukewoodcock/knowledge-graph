@@ -1,5 +1,10 @@
 # knowledge-graph
 
+**Why:** so a decision you made, and the reason for it, is there when an agent
+needs it later, in another session or another project, instead of being lost
+when the session ends. Claude Code sessions are the first source; thoughts and
+other documents can follow.
+
 A local AI agent swarm that builds a personal knowledge graph in your
 **Obsidian** vault, powered by **Ollama** (local LLMs). POST your working
 context from the IDE and the agents run automatically:
