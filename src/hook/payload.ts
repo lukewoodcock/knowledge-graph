@@ -41,14 +41,14 @@ export const DEFAULT_URL = 'http://localhost:5678/webhook/knowledge-graph/trigge
 
 export function loadHookConfig(env: NodeJS.ProcessEnv = process.env): HookConfig {
   return {
-    url: env.SWARM_KG_URL || DEFAULT_URL,
-    disabled: env.SWARM_KG_DISABLE === '1',
-    vaultPath: env.SWARM_KG_VAULT_PATH || undefined,
-    timeoutMs: positiveInt(env.SWARM_KG_TIMEOUT_MS, 2000),
-    maxFiles: positiveInt(env.SWARM_KG_MAX_FILES, 5),
+    url: env.KG_URL || DEFAULT_URL,
+    disabled: env.KG_DISABLE === '1',
+    vaultPath: env.KG_VAULT_PATH || undefined,
+    timeoutMs: positiveInt(env.KG_TIMEOUT_MS, 2000),
+    maxFiles: positiveInt(env.KG_MAX_FILES, 5),
     maxCodeChars: 4000,
     maxDescriptionChars: 1000,
-    debug: env.SWARM_KG_DEBUG === '1',
+    debug: env.KG_DEBUG === '1',
   };
 }
 
@@ -60,7 +60,7 @@ export function isInside(child: string, parent: string): boolean {
 
 /** Why the hook should do nothing, or null to proceed. */
 export function skipReason(input: StopHookInput, cfg: HookConfig): string | null {
-  if (cfg.disabled) return 'SWARM_KG_DISABLE=1';
+  if (cfg.disabled) return 'KG_DISABLE=1';
   if (input.stop_hook_active) return 'stop_hook_active';
   if (input.hook_event_name && input.hook_event_name !== 'Stop') return `event ${input.hook_event_name}`;
   if (!input.transcript_path) return 'no transcript_path';

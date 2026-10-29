@@ -2,19 +2,19 @@
   "permissions": {
     "allow": [
       "Skill(recall)",
-      "mcp__swarm-kg__search_notes",
-      "mcp__swarm-kg__get_note",
-      "mcp__swarm-kg__related_notes"
+      "mcp__knowledge-graph__search_notes",
+      "mcp__knowledge-graph__get_note",
+      "mcp__knowledge-graph__related_notes"
     ]
   },
-  "enabledMcpjsonServers": ["swarm-kg"],
+  "enabledMcpjsonServers": ["knowledge-graph"],
   "hooks": {
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "SWARM_KG_VAULT_PATH=/ABSOLUTE/PATH/TO/vault node /ABSOLUTE/PATH/TO/swarm-kg/dist/hook/stop.js",
+            "command": "KG_VAULT_PATH=/ABSOLUTE/PATH/TO/vault node /ABSOLUTE/PATH/TO/knowledge-graph/dist/hook/stop.js",
             "async": true,
             "timeout": 10
           }

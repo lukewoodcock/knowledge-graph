@@ -2,7 +2,7 @@
  * `npm run reindex`: asks the running service to rebuild its embedding index
  * from the notes. The service owns the index, so the command goes through
  * its API rather than writing the file itself. With the service stopped,
- * deleting `.swarm-kg/` in the vault and starting the service does the same.
+ * deleting `.knowledge-graph/` in the vault and starting the service does the same.
  */
 
 import { serviceUrl } from './env';

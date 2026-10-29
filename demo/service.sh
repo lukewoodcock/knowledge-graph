@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the built swarm-kg service in the foreground against a demo vault and
+# Runs the built knowledge-graph service in the foreground against a demo vault and
 # the local Ollama, so its console shows each run as it finishes.
 #
 #   demo/service.sh <vault-dir> [port]

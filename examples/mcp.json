@@ -1,10 +1,10 @@
 {
   "mcpServers": {
-    "swarm-kg": {
+    "knowledge-graph": {
       "type": "stdio",
       "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/swarm-kg/dist/mcp/server.js"],
-      "env": { "SWARM_KG_SERVICE_URL": "http://127.0.0.1:5678" }
+      "args": ["/ABSOLUTE/PATH/TO/knowledge-graph/dist/mcp/server.js"],
+      "env": { "KG_SERVICE_URL": "http://127.0.0.1:5678" }
     }
   }
 }

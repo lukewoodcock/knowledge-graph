@@ -60,7 +60,7 @@ export const MAX_SEARCH_LIMIT = 50;
 const SNIPPET_LENGTH = 300;
 
 /** Where the index lives, relative to the vault root. Obsidian hides dot folders. */
-export const INDEX_FILE = path.join('.swarm-kg', 'index.json');
+export const INDEX_FILE = path.join('.knowledge-graph', 'index.json');
 // 2: type, kind and status kept apart, and research decided by the note's type alone.
 const INDEX_VERSION = 2;
 

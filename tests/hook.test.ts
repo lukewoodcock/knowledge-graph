@@ -142,18 +142,18 @@ describe('loadHookConfig / skipReason', () => {
     expect(skipReason(input, cfg)).toBeNull();
   });
 
-  test('honours SWARM_KG_URL', () => {
-    expect(loadHookConfig({ SWARM_KG_URL: 'http://x/y' }).url).toBe('http://x/y');
+  test('honours KG_URL', () => {
+    expect(loadHookConfig({ KG_URL: 'http://x/y' }).url).toBe('http://x/y');
   });
 
   test('skips when disabled, re-entered, or missing a transcript', () => {
-    expect(skipReason(input, loadHookConfig({ SWARM_KG_DISABLE: '1' }))).toMatch(/DISABLE/);
+    expect(skipReason(input, loadHookConfig({ KG_DISABLE: '1' }))).toMatch(/DISABLE/);
     expect(skipReason({ ...input, stop_hook_active: true }, loadHookConfig({}))).toBe('stop_hook_active');
     expect(skipReason({ ...input, transcript_path: undefined }, loadHookConfig({}))).toMatch(/transcript/);
   });
 
   test('skips when cwd is the vault or inside it, not a sibling', () => {
-    const cfg = loadHookConfig({ SWARM_KG_VAULT_PATH: '/work/vault' });
+    const cfg = loadHookConfig({ KG_VAULT_PATH: '/work/vault' });
     expect(skipReason({ ...input, cwd: '/work/vault' }, cfg)).toMatch(/vault/);
     expect(skipReason({ ...input, cwd: '/work/vault/code' }, cfg)).toMatch(/vault/);
     expect(skipReason({ ...input, cwd: '/work/vault-tools' }, cfg)).toBeNull();
@@ -223,7 +223,7 @@ describe('buildPayloads', () => {
         { tool: 'Write', filePath: '/w/vault/code/note.md', content: 'x' },
       ],
     };
-    const payloads = buildPayloads(t, { projectDir: '/w', cfg: loadHookConfig({ SWARM_KG_VAULT_PATH: '/w/vault' }) });
+    const payloads = buildPayloads(t, { projectDir: '/w', cfg: loadHookConfig({ KG_VAULT_PATH: '/w/vault' }) });
     expect(payloads.map(p => p.file_path)).toEqual(['a.go']);
   });
 

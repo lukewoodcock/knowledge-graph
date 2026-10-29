@@ -1,14 +1,14 @@
 ---
 name: remember
-description: Save what's worth keeping from this conversation into the swarm-kg knowledge graph as memos.
+description: Save what's worth keeping from this conversation into the knowledge graph as memos.
 argument-hint: "[what to remember]"
 disable-model-invocation: true
-allowed-tools: Bash(node /ABSOLUTE/PATH/TO/swarm-kg/dist/remember.js *)
+allowed-tools: Bash(node /ABSOLUTE/PATH/TO/knowledge-graph/dist/remember.js *)
 ---
 
 # Remember
 
-Distil this conversation into **memos**: notes for the swarm-kg knowledge graph, written by you, that an agent in another session and another project will recall months from now. That reader has none of this conversation, so every memo is **self-contained**.
+Distil this conversation into **memos**: notes for the knowledge graph, written by you, that an agent in another session and another project will recall months from now. That reader has none of this conversation, so every memo is **self-contained**.
 
 What to remember: $ARGUMENTS
 
@@ -43,7 +43,7 @@ Leave out credentials, tokens, API keys, passwords, private keys and personal da
 
 The memos travel through a file: Claude Code's Bash check blocks any command whose text holds a brace followed by a quote, which memo JSON always does.
 
-1. With the Write tool, write all the memos as one JSON array (at most 20) to `swarm-kg-memos.json` in your **scratchpad directory**, where writes need no approval and the capture hook never looks; without a scratchpad, use a temporary file. Valid JSON: escape `"` and `\` inside strings, and write line breaks as `\n`.
+1. With the Write tool, write all the memos as one JSON array (at most 20) to `knowledge-graph-memos.json` in your **scratchpad directory**, where writes need no approval and the capture hook never looks; without a scratchpad, use a temporary file. Valid JSON: escape `"` and `\` inside strings, and write line breaks as `\n`.
 
    ```json
    [{"kind": "decision", "title": "...", "body": "...", "files": ["src/cache.ts"]}]
@@ -52,7 +52,7 @@ The memos travel through a file: Claude Code's Bash check blocks any command who
 2. Send them with **one** Bash call of exactly this shape:
 
    ```bash
-   node /ABSOLUTE/PATH/TO/swarm-kg/dist/remember.js --session "${CLAUDE_SESSION_ID}" --project-dir "${CLAUDE_PROJECT_DIR}" < /path/to/scratchpad/swarm-kg-memos.json
+   node /ABSOLUTE/PATH/TO/knowledge-graph/dist/remember.js --session "${CLAUDE_SESSION_ID}" --project-dir "${CLAUDE_PROJECT_DIR}" < /path/to/scratchpad/knowledge-graph-memos.json
    ```
 
 The command adds the session and the project itself. Its exit code says what happened:

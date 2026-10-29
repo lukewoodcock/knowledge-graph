@@ -9,7 +9,7 @@
 #   <demo-dir>/demo.env     the paths and service URL, for `source`
 #
 # Both projects are wired with the example config from examples/: the capture
-# hook, the swarm-kg MCP server, the /recall and /remember skills, and
+# hook, the knowledge-graph MCP server, the /recall and /remember skills, and
 # settings pointing them at the service on --port. Context injection starts
 # off in both; switch it with demo/injection.sh. Nothing is written outside
 # <demo-dir>. --force recreates projects an earlier setup made.
@@ -17,7 +17,7 @@ set -euo pipefail
 
 DEMO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(dirname "$DEMO")"
-MARKER=".swarm-kg-demo-project"
+MARKER=".knowledge-graph-demo-project"
 
 usage() { echo "usage: demo/setup.sh <demo-dir> [--port <port>] [--force]" >&2; exit 1; }
 [ $# -ge 1 ] || usage
@@ -42,7 +42,7 @@ URL="http://127.0.0.1:$PORT"
 VAULT="$TARGET/vault"
 
 # Commits as a throwaway demo identity, never touching the user's git config.
-git_demo() { git -c user.name="swarm-kg demo" -c user.email="demo@swarm-kg.invalid" -c commit.gpgsign=false "$@"; }
+git_demo() { git -c user.name="knowledge-graph demo" -c user.email="demo@knowledge-graph.invalid" -c commit.gpgsign=false "$@"; }
 
 for name in shortlinks notes-api; do
   dir="$TARGET/$name"
@@ -72,6 +72,6 @@ export DEMO_DIR="$TARGET"
 export DEMO_VAULT="$VAULT"
 export DEMO_A="$TARGET/shortlinks"
 export DEMO_B="$TARGET/notes-api"
-export SWARM_KG_SERVICE_URL="$URL"
+export KG_SERVICE_URL="$URL"
 EOF
 echo "setup: done. source $TARGET/demo.env, then start the service: demo/service.sh \"$VAULT\" $PORT"
