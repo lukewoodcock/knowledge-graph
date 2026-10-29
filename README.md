@@ -719,3 +719,8 @@ Behaviour-preserving migration, with a few deliberate fixes:
   links to its candidates, so it never writes a link to a note that doesn't exist.
 - **No URL string-replace hack** — agents are function calls, not HTTP
   round-trips through the workflow engine.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). knowledge-graph isn't open to contributions yet; see
+[CONTRIBUTING.md](CONTRIBUTING.md).

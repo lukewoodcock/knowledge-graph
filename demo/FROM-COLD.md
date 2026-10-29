@@ -271,6 +271,11 @@ node ~/Personal/knowledge-graph/dist/ask.js "Before I add rate limiting to POST 
 Back in the graph view: the new notes from project A, linked to the seed. One
 vault for every project, plain markdown, and the index rebuilds from the notes.
 
+If asked whether it's all local: see the
+[What runs where](SCRIPT.md#what-runs-where) table. In short, the graph is
+built and searched on this laptop; Claude writes the code, the memo text and
+the answers.
+
 ## Part 4: if something goes wrong
 
 | If | Then |

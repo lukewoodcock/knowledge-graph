@@ -136,6 +136,26 @@ every terminal.
    curl -s -X POST "$KG_SERVICE_URL/webhook/knowledge-graph/search" -H 'Content-Type: application/json' -d '{"query":"warm up"}' >/dev/null
    ```
 
+## What runs where
+
+For the question "is this all local?". The detail is in
+[docs/architecture.md](../docs/architecture.md#what-runs-where).
+
+| Part | Runs on |
+|------|---------|
+| Code capture (the capture hook) | Local script, no model |
+| Documenter and Linker | Local: Ollama, `qwen3.5:9b` |
+| Embeddings and search | Local: Ollama, `bge-large` |
+| Context injection (the hook) | Local script |
+| Memos (`/remember`) | **Claude** writes them; stored and linked locally |
+| Session A's coding | **Claude** |
+| Session B's answer | **Claude**, reading the graph through the local MCP server |
+| Step 5's answer (the Reader) | Local: Ollama, `qwen3.6:35b-a3b-coding` |
+
+The graph is built locally, except the memo text, which Claude writes because
+only the session's agent has the conversation. Step 5 reads it with no cloud
+model at all.
+
 ## The demo (about 8 minutes)
 
 Times are from the rehearsal on real Ollama (qwen3.5:9b, bge-large); the
@@ -169,6 +189,10 @@ billing-service rate limiter and the shortlinks todo.
 Talking point: the hook is async, so Claude never waits for it; captures run
 one at a time in a queue so they don't fight over one local Ollama.
 
+Talking point: Claude in the cloud wrote the code, but everything after the
+turn ends is on this laptop. The capture hook is a script, the Documenter and
+Linker run on Ollama, and the embeddings on bge-large.
+
 ### 2. `/remember` saves the decision (about 70 s)
 
 In the same session:
@@ -186,6 +210,10 @@ in-memory per-IP token bucket"), a todo (verify it end to end) and a snippet
 and to the other two memos.
 Open the decision memo in Obsidian: context paragraph, choice, rejected
 alternatives, consequences.
+
+Talking point: this is the one cloud step in building the graph. Claude writes
+the memo because only it has the conversation; storing, linking and indexing
+it are local.
 
 `/exit`. Then, in the same terminal, start loading the Reader's model for
 step 5 in the background. The captures are done, so it can't slow them, and
@@ -214,6 +242,9 @@ keys, no Redis because it's one dependency-free process. It ends with
 
 Talking point: nobody told it to use the graph; the skill's description says
 when the graph is worth checking. Every claim cites its note.
+
+Talking point: Claude writes the answer, but the graph it reads and the search
+behind `search_notes` stay on this machine.
 
 `/exit`.
 
@@ -262,6 +293,8 @@ purpose-built loop.
 
 Graph view: the new notes from project A, linked to the seed. One vault,
 every project; the notes are plain markdown and the index rebuilds from them.
+Nothing in the graph depends on the cloud: it's local markdown and a local
+index, and any agent that can call the three graph tools can read it.
 
 ## Fallbacks
 
