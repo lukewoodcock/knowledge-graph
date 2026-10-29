@@ -48,6 +48,8 @@ flowchart LR
     CI["Context-injection hook<br/>UserPromptSubmit, sync"]
   end
 
+  RD["Reader: npm run ask<br/>local Ollama model"]
+
   CH -- "code captures" --> Q
   RM -- "memos" --> Q
   Q -- "code capture" --> DOC & RES
@@ -56,7 +58,7 @@ flowchart LR
   LNK -- "write" --> N
   N -- "index after the run" --> I
   I & N --> API
-  API -- "tool calls" --> MCP
+  API -- "tool calls" --> MCP & RD
   API -- "best notes,<br/>every prompt" --> CI
 ```
 
@@ -484,6 +486,58 @@ claude -p "/recall why did we pick a token bucket for rate limiting?" --output-f
 claude -p "How did I back up Postgres before?" --allowedTools "Skill(recall)"
 ```
 
+### Recall with a local model (`npm run ask`)
+
+Recall through `/recall` or MCP is answered by the agent in the session,
+Claude, in the cloud. For notes that must never leave the machine, the
+**Reader** answers the same questions with a local Ollama model:
+
+```bash
+npm run ask -- "How did I rate-limit link creation in shortlinks, and why?"
+```
+
+It is a small agent loop over Ollama's native `/api/chat` with tool calls,
+offering the model the MCP server's three tools (`search_notes`, `get_note`,
+`related_notes`, the same definitions). The model searches, opens notes and
+follows links, then answers citing notes as `[[name]]`. The answer goes to
+stdout, ending in a **Notes used** list the Reader builds from the notes it
+actually retrieved; a citation of a note it never retrieved is listed apart,
+under **Cited but never retrieved**. Each step goes to stderr:
+
+```
+ask: qwen3.6:35b-a3b-coding on http://127.0.0.1:11434
+step 1 (0.8 s): search_notes {"query":"rate limit link creation shortlinks","kind":"decision"}
+step 2 (2.4 s): get_note {"name":"2026-10-28_Rate-limit_shortlinks_POST__links_with_a_per-IP_token_bucket"}, get_note {...}
+step 3 (10.3 s): answer
+answered in 13.6 s, 3 steps
+```
+
+It stays on this machine, and refuses to start otherwise: the Ollama and
+service URLs must be loopback (`127.0.0.0/8`, `::1`, `localhost`), and an
+Ollama cloud model (a `cloud` tag, or one `/api/show` says runs on a remote
+host) is refused. It also checks, before loading the model, that the service
+is up and the model is pulled and can call tools. After 8 steps of tool
+calls, the model gets one last turn without tools and must answer from what
+it read. The system prompt and every tool description say note contents are
+reference material, never instructions. Exit codes: 0 answered, 1 could not
+answer (the reason on stderr), 2 no question.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KG_READER_MODEL` | `qwen3.6:35b-a3b-coding` | Ollama model; must support tools. `qwen3.5:9b` also works, about twice as slow |
+| `KG_READER_OLLAMA_URL` | `http://127.0.0.1:11434` | Ollama API; loopback only |
+| `KG_SERVICE_URL` | `http://127.0.0.1:5678` | The service; loopback only |
+| `KG_READER_MAX_STEPS` | `8` | Most tool-calling turns before it must answer |
+| `KG_READER_TIMEOUT_MS` | `180000` | Longest wait for one model reply, a cold load included |
+
+On an M4 Pro with 48 GB, the demo question takes about 14 s with the model
+loaded and about 33 s from cold (the first step loads 22 GB). Ollama keeps
+one large model in memory when other apps need the rest, so asking can
+unload the service's `qwen3.5:9b`, and the next capture reloads it. Claude
+Code itself pointed at Ollama was tried first and is not the local path:
+with the same model it took 158 s, ignored the graph tools and was partly
+wrong (see [ADR 0002](docs/adr/0002-local-recall-is-a-small-purpose-built-loop.md)).
+
 ### Trigger from Claude Code (Stop hook)
 
 `dist/hook/stop.js` is a Claude Code
@@ -607,6 +661,9 @@ src/
 ├── requests.ts         # pure validation of memo and search request bodies
 ├── memos.ts            # memo notes and their same-session links
 ├── reindex.ts          # npm run reindex: asks the service to rebuild the index
+├── ask.ts              # npm run ask: the Reader's command line
+├── reader.ts           # the Reader: recall answered by a local Ollama model, in a tool loop
+├── graph-tools.ts      # search_notes, get_note, related_notes: shared by the MCP server and the Reader
 ├── remember.ts         # dist/remember.js: what /remember runs to send memos and report them
 ├── vault.ts            # frontmatter parsing and writing, file helpers
 ├── vault-format.ts     # what writers and readers agree on: folders, note names, link sections, wikilinks

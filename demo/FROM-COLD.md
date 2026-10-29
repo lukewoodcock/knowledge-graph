@@ -38,11 +38,12 @@ Done when `ls dist/hook` lists `prompt.js` and `stop.js`.
 
 ```bash
 open -a Ollama
-curl -s localhost:11434/api/tags | grep -oE '"(qwen3.5:9b|bge-large:latest)"'
+curl -s localhost:11434/api/tags | grep -oE '"(qwen3.5:9b|bge-large:latest|qwen3.6:35b-a3b-coding)"'
 ```
 
-Done when both model names print. If one is missing:
-`ollama pull qwen3.5:9b` or `ollama pull bge-large`.
+Done when all three model names print. If one is missing:
+`ollama pull qwen3.5:9b`, `ollama pull bge-large` or
+`ollama pull qwen3.6:35b-a3b-coding` (the Reader's model for step 5, 22 GB).
 
 ### 1.4 Create the demo projects and vault
 
@@ -204,6 +205,12 @@ In the same session:
 - If it says the run is still queued, it runs the check command again. Let it.
 - Open the decision memo in Obsidian: context, choice, rejected alternatives.
 - Type `/exit`.
+- Still in terminal 2, start loading the Reader's model for step 5 in the
+  background (it takes about 15 s and prints nothing):
+
+  ```bash
+  curl -s localhost:11434/api/generate -d '{"model":"qwen3.6:35b-a3b-coding","prompt":"hi","stream":false,"think":false}' >/dev/null &
+  ```
 
 ### Step 3: session B, injection off (about 30 seconds)
 
@@ -245,7 +252,21 @@ Paste the same prompt as step 3.
   `/exit`, start `claude` again and paste the prompt again.
 - Type `/exit`.
 
-### Step 5: close (30 seconds)
+### Step 5: the same question, answered by a local model (about 20 seconds)
+
+Still in terminal 3:
+
+```bash
+node ~/Personal/knowledge-graph/dist/ask.js "Before I add rate limiting to POST /notes here: how did I rate-limit link creation in shortlinks, and why that approach?"
+```
+
+- Each step prints as it happens: a search, then `get_note` on the new
+  notes, then the answer.
+- The answer gives the same facts as step 3, cited inline, and ends with
+  **Notes used**.
+- Say it: nothing in this step left the machine.
+
+### Step 6: close (30 seconds)
 
 Back in the graph view: the new notes from project A, linked to the seed. One
 vault for every project, plain markdown, and the index rebuilds from the notes.
@@ -264,6 +285,8 @@ the answers.
 | Session B doesn't use recall on its own | Ask: `/recall how did I rate-limit link creation in shortlinks, and why?` |
 | `knowledge-graph` tools are denied or missing | `/mcp` and approve the server |
 | No live notes at all (Ollama down, runs failing) | Reset (2.3), then ask the fallback question in project B: `Before I add rate limiting to POST /notes here: how have I rate-limited APIs in my other projects, and why that approach? Don't change any files yet.` The seed alone answers it |
+
+| Step 5 says the model is not pulled | Ask again with `KG_READER_MODEL=qwen3.5:9b` in front (about 30 s); pull the 35B model after the demo |
 
 More cases are in [SCRIPT.md](SCRIPT.md#fallbacks).
 
