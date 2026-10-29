@@ -665,5 +665,5 @@ Behaviour-preserving migration, with a few deliberate fixes:
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). The repository isn't open to contributions yet,
-so issues and pull requests from outside may be closed without review.
+MIT, see [LICENSE](LICENSE). swarm-kg isn't open to contributions yet; see
+[CONTRIBUTING.md](CONTRIBUTING.md).
