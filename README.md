@@ -1,5 +1,11 @@
 # knowledge-graph
 
+**You forget. Your agents forget. Your knowledge graph doesn't.**
+
+Build your personal knowledge graph, locally. Every decision, lesson and idea
+you work through with an agent is kept as linked notes on your own machine,
+ready for the next agent that needs it, in any session or project.
+
 A local AI agent swarm that builds a personal knowledge graph in your
 **Obsidian** vault, powered by **Ollama** (local LLMs). POST your working
 context from the IDE and the agents run automatically:
