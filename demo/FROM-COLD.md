@@ -20,13 +20,11 @@ The repository is `~/Personal/knowledge-graph`, and the demo lives in
 brew install --cask obsidian
 ```
 
-### 1.2 Check out the demo branch and build it
-
-Until PR #17 is merged, the demo kit is on `poc-loop`.
+### 1.2 Update main and build it
 
 ```bash
 cd ~/Personal/knowledge-graph
-git switch poc-loop
+git switch main
 git pull
 npm ci
 npm run build
