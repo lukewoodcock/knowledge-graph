@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import * as http from 'http';
 import {
   createModelClient,
@@ -27,7 +27,6 @@ interface Received {
   at: number;
 }
 
-/** A mock Ollama that gives out scripted replies in order and records what it was sent. */
 describe('the model client', () => {
   const OK_CHAT = { body: { message: { role: 'assistant', content: 'hello' }, done: true } };
 
@@ -35,6 +34,7 @@ describe('the model client', () => {
   let received: Received[] = [];
   let url: string;
 
+  /** A mock Ollama that gives out `script` in order and records what it was sent. */
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', c => (raw += c));
@@ -181,7 +181,7 @@ describe('the model client', () => {
       const failure = await failureOf(createModelClient({ url }, { chatTimeoutMs: 30, retryDelayMs: 1 }).chat('mock', HI));
 
       expect(failure).toBeInstanceOf(ModelError);
-      expect(failure.kind).toBe('timeout');
+      expect(failure.reason).toBe('timeout');
       expect(received).toHaveLength(1);
     });
 
@@ -190,8 +190,27 @@ describe('the model client', () => {
 
       const failure = await failureOf(createModelClient({ url }, { embedTimeoutMs: 30 }).embed('mock-embed', ['first']));
 
-      expect(failure.kind).toBe('timeout');
+      expect(failure.reason).toBe('timeout');
     });
+
+    test.each(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'])(
+      "Node's own fetch limit (%s) is a timeout, not a network error, and is not retried",
+      async code => {
+        const gaveUp = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('Timeout Error'), { code }) });
+        const fetchStub = vi.fn().mockRejectedValue(gaveUp);
+        vi.stubGlobal('fetch', fetchStub);
+
+        try {
+          const failure = await failureOf(createModelClient({ url }, { retryDelayMs: 1 }).chat('mock', HI));
+
+          expect(failure.reason).toBe('timeout');
+          expect(failure.detail).toContain('300 s');
+          expect(fetchStub).toHaveBeenCalledTimes(1);
+        } finally {
+          vi.unstubAllGlobals();
+        }
+      },
+    );
 
     test('the defaults leave a slow local model room: 600 s for chat, 60 s for embeddings', () => {
       expect(DEFAULT_CHAT_TIMEOUT_MS).toBe(600_000);
@@ -277,7 +296,7 @@ describe('the model client', () => {
 
       const failure = await failureOf(createModelClient({ url }, { retryDelayMs: 1 }).chat('mock', HI));
 
-      expect(failure.kind).toBe('cut-off');
+      expect(failure.reason).toBe('cut-off');
       expect(failure.message).toContain('8192');
       expect(received).toHaveLength(1);
     });
@@ -293,14 +312,14 @@ describe('the model client', () => {
 
       const failure = await failureOf(createModelClient({ url }).chat('mock', HI));
 
-      expect(failure.kind).toBe('malformed');
+      expect(failure.reason).toBe('malformed');
       expect(failure.detail).toBe('model is loading');
     });
 
     test('a 200 that is not JSON is a failure', async () => {
       script = [{ body: '<html>gateway</html>' }];
 
-      expect((await failureOf(createModelClient({ url }).chat('mock', HI))).kind).toBe('malformed');
+      expect((await failureOf(createModelClient({ url }).chat('mock', HI))).reason).toBe('malformed');
     });
   });
 

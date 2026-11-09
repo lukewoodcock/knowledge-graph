@@ -204,6 +204,8 @@ either fails, the notes are still written and listed, and the run is
 `"partial"`, not an error. If no agent writes a note, the run is `"error"`.
 
 Every model call has a timeout: 600 s for a chat reply, 60 s for embeddings.
+Node's `fetch` stops waiting for a reply after 300 s regardless, so for now
+that is the real limit on chat, and on `KG_READER_TIMEOUT_MS`.
 Calls that get a 429, a 5xx or a network error are retried up to twice,
 waiting as long as `Retry-After` says (up to a minute). A reply is limited to
 8,192 tokens, and one cut off by that limit is a failure, so a half-written

@@ -62,12 +62,27 @@ export interface ModelClientOptions {
 /** Most tokens a model may write in one reply. */
 export const MAX_OUTPUT_TOKENS = 8192;
 
-/** Long enough for a local thinking model, which is slow, on a cold start. */
+/**
+ * Long enough for a local thinking model, which is slow, on a cold start.
+ * Node's fetch has its own limit, below this: see FETCH_LIMIT.
+ */
 export const DEFAULT_CHAT_TIMEOUT_MS = 600_000;
 export const DEFAULT_EMBED_TIMEOUT_MS = 60_000;
 
 const DEFAULT_RETRY_DELAY_MS = 500;
 const MAX_RETRIES = 2;
+
+/**
+ * Node's fetch stops waiting for a reply's headers, or between pieces of its
+ * body, after 300 s, whatever the abort signal says; and with stream: false
+ * Ollama sends nothing until the reply is done. So this is the real ceiling.
+ */
+const FETCH_LIMIT = "Node's fetch stops waiting for a reply after 300 s";
+
+function hitFetchLimit(err: unknown): boolean {
+  const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return code === 'UND_ERR_HEADERS_TIMEOUT' || code === 'UND_ERR_BODY_TIMEOUT';
+}
 
 /** The longest Retry-After we'll sit out. Longer than this and the call fails, as retrying sooner would be ignoring it. */
 const MAX_RETRY_AFTER_MS = 60_000;
@@ -78,7 +93,7 @@ export type ModelFailure = 'timeout' | 'unreachable' | 'rejected' | 'malformed' 
 export class ModelError extends Error {
   constructor(
     message: string,
-    readonly kind: ModelFailure,
+    readonly reason: ModelFailure,
     /** What the API or the network said, when it said anything. */
     readonly detail?: string,
     /** The HTTP status, when the API replied with an error. */
@@ -122,13 +137,13 @@ function networkDetail(err: unknown): string {
 function modelError(
   endpoint: ModelEndpoint,
   summary: string,
-  kind: ModelFailure,
+  reason: ModelFailure,
   detail?: string,
   status?: number,
 ): ModelError {
   const redact = (text: string) => (endpoint.apiKey ? text.split(endpoint.apiKey).join('[redacted]') : text);
   const cleanDetail = detail === undefined ? undefined : redact(detail);
-  return new ModelError(redact(cleanDetail ? `${summary}: ${cleanDetail}` : summary), kind, cleanDetail, status);
+  return new ModelError(redact(cleanDetail ? `${summary}: ${cleanDetail}` : summary), reason, cleanDetail, status);
 }
 
 /** Makes one attempt, including reading the whole reply, within the timeout. */
@@ -146,6 +161,9 @@ async function attempt(endpoint: ModelEndpoint, request: ollama.OllamaRequest, t
   } catch (err) {
     if (err instanceof Error && err.name === 'TimeoutError') {
       return { ok: false, retryable: false, error: modelError(endpoint, `No reply from the model within ${timeoutMs} ms`, 'timeout') };
+    }
+    if (hitFetchLimit(err)) {
+      return { ok: false, retryable: false, error: modelError(endpoint, 'No reply from the model', 'timeout', FETCH_LIMIT) };
     }
     return {
       ok: false,
@@ -200,13 +218,13 @@ export function createModelClient(endpoint: ModelEndpoint, options: ModelClientO
     embedTimeoutMs = DEFAULT_EMBED_TIMEOUT_MS,
     retryDelayMs = DEFAULT_RETRY_DELAY_MS,
   } = options;
+  const retrying = { retries: MAX_RETRIES, retryDelayMs };
 
   return {
     async chat(model, messages, tools) {
       const body = await post(endpoint, ollama.chatRequest(model, messages, tools, think, MAX_OUTPUT_TOKENS), {
         timeoutMs: chatTimeoutMs,
-        retries: MAX_RETRIES,
-        retryDelayMs,
+        ...retrying,
       });
       const parsed = ollama.parseChatReply(body);
       if (!parsed) {
@@ -222,8 +240,7 @@ export function createModelClient(endpoint: ModelEndpoint, options: ModelClientO
       if (input.length === 0) return [];
       const body = await post(endpoint, ollama.embedRequest(model, input), {
         timeoutMs: embedTimeoutMs,
-        retries: MAX_RETRIES,
-        retryDelayMs,
+        ...retrying,
       });
       const embeddings = ollama.parseEmbedReply(body);
       if (!Array.isArray(embeddings) || embeddings.length !== input.length) {

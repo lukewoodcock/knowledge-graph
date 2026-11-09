@@ -175,10 +175,12 @@ async function explainingFailure<T>(options: ReaderOptions, timeoutMs: number, c
     return await call();
   } catch (err) {
     if (!(err instanceof ModelError)) throw err;
-    switch (err.kind) {
+    switch (err.reason) {
       case 'timeout':
         throw new ReaderError(
-          `${options.model} took longer than ${timeoutMs} ms to reply. Raise KG_READER_TIMEOUT_MS, or try a smaller model.`,
+          err.detail
+            ? `${options.model} did not reply in time: ${err.detail}. Try a smaller model.`
+            : `${options.model} took longer than ${timeoutMs} ms to reply. Raise KG_READER_TIMEOUT_MS, or try a smaller model.`,
         );
       case 'unreachable':
         throw new ReaderError(`Ollama is not reachable at ${options.ollamaUrl}. Is it running? (${err.detail})`);

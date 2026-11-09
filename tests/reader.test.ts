@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import * as http from 'http';
 import * as os from 'os';
@@ -412,6 +412,23 @@ describe('Reader: recall answered by a local model', () => {
       );
       expect(ollama.showRequests).toEqual([]);
       expect(ollama.chatRequests).toEqual([]);
+    });
+
+    test("a reply Node's fetch gave up on names that limit, not KG_READER_TIMEOUT_MS", async () => {
+      const serviceUrl = await startService();
+      const realFetch = fetch;
+      const gaveUp = Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('Headers Timeout Error'), { code: 'UND_ERR_HEADERS_TIMEOUT' }),
+      });
+      vi.stubGlobal('fetch', (input: string, init?: RequestInit) =>
+        String(input).endsWith('/api/chat') ? Promise.reject(gaveUp) : realFetch(input, init),
+      );
+
+      try {
+        await expect(ask('Anything?', options(serviceUrl, { ollamaTimeoutMs: 400_000 }))).rejects.toThrow(/mock-reader.*300 s/);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
 
     test('a model that takes longer than the timeout', async () => {

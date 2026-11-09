@@ -19,7 +19,7 @@ export interface Config {
   researcher: boolean;
   /** Most characters of a note's text the note endpoint (and so get_note) returns; the rest is cut with a marker. */
   noteMaxChars: number;
-  /** Wait before the first retry of a model call, when the API doesn't say; the client's default when left out. */
+  /** Wait before the first retry of a model call, when the API doesn't say. Not a setting: tests shorten it. */
   retryDelayMs?: number;
 }
 
