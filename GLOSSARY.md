@@ -73,9 +73,23 @@ An agent in another session pulling relevant notes from the graph into its work.
 _Avoid_: Query, lookup, retrieval
 
 **Reader**:
-The local agent that answers a recall question from the graph with an Ollama model in a tool loop (`npm run ask`), so recall needs no cloud model. Not one of a run's agents.
+The agent that answers a recall question from the graph with a model in a tool loop (`npm run ask`), so recall needs no Claude session. Local unless configured otherwise. Not one of a run's agents.
 _Avoid_: Reader agent, ask agent
 
 **Context injection**:
 Recall done automatically: relevant notes are added to the agent's context without it asking.
 _Avoid_: Auto-recall, prompt stuffing
+
+## Models
+
+**Model role**:
+Anything that calls a model and can be configured on its own: the Documenter, Researcher, Linker, Reader and embeddings.
+_Avoid_: Agent (only the three inside a run), slot, consumer
+
+**Provider**:
+A service that answers model calls, with its address, key and API style.
+_Avoid_: Backend, vendor
+
+**Local-only guard**:
+The setting that stops every model role from sending anything off this machine. On unless deliberately turned off.
+_Avoid_: Privacy mode, offline mode
