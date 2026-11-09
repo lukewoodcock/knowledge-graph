@@ -210,22 +210,56 @@ describe('Reader: recall answered by a local model', () => {
       },
       { content: 'Write-through [[cache-decision]] (project-b).' },
     ];
-    const steps: Array<{ step: number; ms: number; toolCalls: Array<{ name: string; arguments: unknown }> }> = [];
+    const steps: Array<{ step: number; ms: number; toolCalls: Array<{ id: string; name: string; arguments: unknown }> }> = [];
 
     await ask('Which caching did we choose?', options(serviceUrl, { onStep: s => steps.push(s) }));
 
     expect(steps.map(s => [s.step, s.toolCalls])).toEqual([
-      [1, [{ name: 'search_notes', arguments: { query: 'cache', kind: 'decision' } }]],
+      [1, [{ id: 'call_1', name: 'search_notes', arguments: { query: 'cache', kind: 'decision' } }]],
       [
         2,
         [
-          { name: 'get_note', arguments: { name: 'cache-decision' } },
-          { name: 'related_notes', arguments: { name: 'cache-decision' } },
+          { id: 'call_2', name: 'get_note', arguments: { name: 'cache-decision' } },
+          { id: 'call_3', name: 'related_notes', arguments: { name: 'cache-decision' } },
         ],
       ],
       [3, []],
     ]);
     for (const s of steps) expect(s.ms).toBeGreaterThanOrEqual(0);
+  });
+
+  test("replays the tool loop in Ollama's form: tool calls and results by name, with no IDs on the wire", async () => {
+    await writeVaultNote('memos/cache-decision.md', CACHE_NOTE);
+    const serviceUrl = await startService();
+    ollama.replies = [
+      { toolCalls: [{ name: 'get_note', arguments: { name: 'cache-decision' } }] },
+      { content: 'Write-through [[cache-decision]] (project-b).' },
+    ];
+
+    await ask('Which caching did we choose?', options(serviceUrl));
+
+    const [, assistant, toolResult] = ollama.chatRequests[1].messages.slice(1);
+    expect(assistant).toEqual({
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ function: { name: 'get_note', arguments: { name: 'cache-decision' } } }],
+    });
+    expect(Object.keys(toolResult).sort()).toEqual(['content', 'role', 'tool_name']);
+    expect(toolResult.tool_name).toBe('get_note');
+  });
+
+  test('every chat request carries the output limit', async () => {
+    ollama.replies = [{ content: 'Nothing on that.' }];
+
+    await ask('Anything?', options(await startService()));
+
+    expect(ollama.chatRequests[0].options).toEqual({ num_predict: 8192 });
+  });
+
+  test('a reply cut off by the output limit is an error, not half an answer', async () => {
+    ollama.replies = [{ content: 'The answer is', doneReason: 'length' }];
+
+    await expect(ask('Anything?', options(await startService()))).rejects.toThrow(/mock-reader was cut off/);
   });
 
   test('a cited note the Reader never opened is not listed as used, but reported as unverified', async () => {

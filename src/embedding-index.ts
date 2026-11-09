@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import { Config } from './config';
-import { embed } from './ollama';
+import { createModelClient } from './model-client';
 import { listMarkdownFiles, parseNote } from './vault';
 import { isRecallable, isResearch, LINK_SECTION_HEADINGS, noteName, NoteRef, noteRefFields, vaultRelative } from './vault-format';
 
@@ -225,6 +225,7 @@ function emptyIndex(model: string): IndexFile {
 
 export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
   const indexPath = path.join(cfg.vaultPath, INDEX_FILE);
+  const client = createModelClient(cfg.embedEndpoint, { retryDelayMs: cfg.retryDelayMs });
   // One load, shared by every caller, so two first calls can't each read
   // the file and end up with different copies of the index.
   let loaded: Promise<IndexFile> | undefined;
@@ -272,8 +273,7 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
     const prefix = contextPrefix({ title: frontmatter.title || name, ...ref, summary: summaryLine(frontmatter, sections) });
     // A note with no body is still findable by its title and context.
     const texts = sections.length > 0 ? sections.flatMap(s => chunkSection(s.heading, s.text)) : [''];
-    const vectors = await embed(
-      cfg.embedEndpoint,
+    const vectors = await client.embed(
       cfg.embedModel,
       texts.map(t => (t ? `${prefix}\n\n${t}` : prefix)),
     );
@@ -364,7 +364,7 @@ export function createEmbeddingIndex(cfg: Config): EmbeddingIndex {
       await syncing;
       const index = await load();
       const limit = Math.min(options.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
-      const [queryVector] = await embed(cfg.embedEndpoint, cfg.embedModel, [query]);
+      const [queryVector] = await client.embed(cfg.embedModel, [query]);
 
       const hits: SearchHit[] = [];
       for (const [relPath, note] of Object.entries(index.notes)) {

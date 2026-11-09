@@ -27,10 +27,14 @@ export interface MockOllamaState {
   embedCalls: Array<{ model: string; input: string[] }>;
   /** Every request received, in order: its path and Authorization header, if any. */
   requests: Array<{ path: string; authorization?: string }>;
+  /** The body of every chat request, in the order they arrived. */
+  chatBodies: any[];
+  /** Ollama's reason for ending each chat reply: "length" when the output limit cut it off. */
+  doneReason: string;
 }
 
 export function createMockOllamaState(): MockOllamaState {
-  return { linkTargets: [], links: ['[[existing-note]]'], delayMs: 0, prompts: [], embedCalls: [], requests: [] };
+  return { linkTargets: [], links: ['[[existing-note]]'], delayMs: 0, prompts: [], embedCalls: [], requests: [], chatBodies: [], doneReason: 'stop' };
 }
 
 /** Resets the state in place, so a shared mock starts each test clean. */
@@ -74,6 +78,7 @@ export function createMockOllama(state: MockOllamaState): http.Server {
 
       const parsed = JSON.parse(body || '{}');
       const system: string = parsed.messages?.[0]?.content ?? '';
+      state.chatBodies.push(parsed);
       state.prompts.push(parsed.messages?.[1]?.content ?? '');
       if (state.delayMs > 0) await new Promise(resolve => setTimeout(resolve, state.delayMs));
 
@@ -116,7 +121,7 @@ export function createMockOllama(state: MockOllamaState): http.Server {
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ model: 'mock', message: { role: 'assistant', content }, done: true }));
+      res.end(JSON.stringify({ model: 'mock', message: { role: 'assistant', content }, done: true, done_reason: state.doneReason }));
     });
   });
 }
@@ -131,7 +136,7 @@ export function close(server: http.Server): Promise<void> {
   return new Promise<void>(resolve => server.close(() => resolve()));
 }
 
-/** Config fields that send both chat and embeddings to one Ollama at `url`, with no key. */
-export function ollamaAt(url: string): Pick<Config, 'chatEndpoint' | 'embedEndpoint'> {
-  return { chatEndpoint: { url }, embedEndpoint: { url } };
+/** Config fields that send both chat and embeddings to one Ollama at `url`, with no key and next to no wait between retries. */
+export function ollamaAt(url: string): Pick<Config, 'chatEndpoint' | 'embedEndpoint' | 'retryDelayMs'> {
+  return { chatEndpoint: { url }, embedEndpoint: { url }, retryDelayMs: 1 };
 }

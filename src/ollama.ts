@@ -1,80 +1,115 @@
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+/**
+ * Ollama's API style: what its requests and replies look like. Nothing here
+ * touches the network, and nothing outside this file knows these formats;
+ * the model client does the sending.
+ */
+import type { Message, ModelReply, ToolDefinition } from './model-client';
+
+/** An HTTP POST to make to Ollama. */
+export interface OllamaRequest {
+  path: string;
+  body: object;
 }
 
-/** Where an Ollama API is, and the key it takes, if any. The key is only ever sent to this URL. */
-export interface OllamaEndpoint {
-  url: string;
-  /** Sent as a bearer token: hosted Ollama (https://ollama.com) needs one, a local Ollama doesn't. */
-  apiKey?: string;
-}
-
-function headers(endpoint: OllamaEndpoint): Record<string, string> {
+export function requestHeaders(apiKey: string | undefined): Record<string, string> {
   return {
     'Content-Type': 'application/json',
-    ...(endpoint.apiKey ? { Authorization: `Bearer ${endpoint.apiKey}` } : {}),
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   };
 }
 
-/**
- * Extracts assistant text from an LLM response, supporting both the native
- * Ollama format ({message: {content}}) and the OpenAI-compatible format
- * ({choices: [{message: {content}}]}). Returns '' if neither is present.
- */
-export function extractContent(response: unknown): string {
-  const r = response as {
-    message?: { content?: string };
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  return r?.message?.content ?? r?.choices?.[0]?.message?.content ?? '';
+/** A message as /api/chat takes it: tool calls without IDs, tool results by tool name. */
+function toOllamaMessage(message: Message): object {
+  switch (message.role) {
+    case 'tool':
+      return { role: 'tool', tool_name: message.toolName, content: message.content };
+    case 'assistant':
+      return {
+        role: 'assistant',
+        content: message.content,
+        ...(message.toolCalls?.length && {
+          tool_calls: message.toolCalls.map(c => ({ function: { name: c.name, arguments: c.arguments } })),
+        }),
+      };
+    default:
+      return message;
+  }
 }
 
-/**
- * Sends a chat completion request to Ollama and returns the assistant text.
- * Throws on non-2xx responses so callers can decide how to degrade.
- * `think` is sent explicitly: Ollama ignores it for non-thinking models.
- */
-export async function chat(
-  endpoint: OllamaEndpoint,
+/** `think` is sent explicitly: Ollama ignores it for non-thinking models. */
+export function chatRequest(
   model: string,
-  messages: ChatMessage[],
-  think = false,
-): Promise<string> {
-  const res = await fetch(`${endpoint.url}/api/chat`, {
-    method: 'POST',
-    headers: headers(endpoint),
-    body: JSON.stringify({ model, stream: false, think, messages }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Ollama request failed: HTTP ${res.status} ${res.statusText}`);
-  }
-
-  return extractContent(await res.json());
+  messages: Message[],
+  tools: ToolDefinition[] | undefined,
+  think: boolean,
+  maxOutputTokens: number,
+): OllamaRequest {
+  return {
+    path: '/api/chat',
+    body: {
+      model,
+      stream: false,
+      think,
+      messages: messages.map(toOllamaMessage),
+      ...(tools && { tools: tools.map(t => ({ type: 'function', function: t })) }),
+      options: { num_predict: maxOutputTokens },
+    },
+  };
 }
 
-/**
- * Embeds texts with Ollama's /api/embed, returning one vector per input, in
- * order. Throws on non-2xx responses or a reply without one vector per input.
- */
-export async function embed(endpoint: OllamaEndpoint, model: string, input: string[]): Promise<number[][]> {
-  if (input.length === 0) return [];
-  const res = await fetch(`${endpoint.url}/api/embed`, {
-    method: 'POST',
-    headers: headers(endpoint),
-    // Truncation is Ollama's default, but sections are chunked to fit, so
-    // it's only a backstop; sent explicitly in case the default changes.
-    body: JSON.stringify({ model, input, truncate: true }),
-  });
+interface OllamaChatReply {
+  message?: {
+    content?: string;
+    tool_calls?: Array<{ function?: { name?: string; arguments?: unknown } }>;
+  };
+  prompt_eval_count?: number;
+  done_reason?: string;
+}
 
-  if (!res.ok) {
-    throw new Error(`Ollama embed request failed: HTTP ${res.status} ${res.statusText}`);
-  }
+/** The reply in a /api/chat response and whether the output limit cut it off; undefined if it holds no message. */
+export function parseChatReply(body: unknown): { reply: ModelReply; cutOff: boolean } | undefined {
+  const parsed = body as OllamaChatReply | null;
+  if (!parsed?.message) return undefined;
+  const { content, tool_calls } = parsed.message;
+  return {
+    reply: {
+      text: content ?? '',
+      toolCalls: (tool_calls ?? []).map(c => ({ name: c.function?.name ?? '', arguments: c.function?.arguments })),
+      inputTokens: parsed.prompt_eval_count,
+    },
+    cutOff: parsed.done_reason === 'length',
+  };
+}
 
-  const embeddings = ((await res.json()) as { embeddings?: unknown }).embeddings;
-  if (!Array.isArray(embeddings) || embeddings.length !== input.length) {
-    throw new Error(`Ollama embed reply did not hold ${input.length} embedding(s)`);
-  }
-  return embeddings as number[][];
+// Truncation is Ollama's default, but sections are chunked to fit, so it's
+// only a backstop; sent explicitly in case the default changes.
+export function embedRequest(model: string, input: string[]): OllamaRequest {
+  return { path: '/api/embed', body: { model, input, truncate: true } };
+}
+
+/** The vectors in an /api/embed reply. */
+export function parseEmbedReply(body: unknown): unknown {
+  return (body as { embeddings?: unknown } | null)?.embeddings;
+}
+
+/** What an Ollama error reply says went wrong. */
+export function failureDetail(body: unknown): string | undefined {
+  const error = (body as { error?: unknown } | null)?.error;
+  return typeof error === 'string' ? error : undefined;
+}
+
+/** What Ollama says about a pulled model. */
+export interface OllamaModelInfo {
+  capabilities: string[];
+  /** The model runs on someone else's servers, though it's called through this Ollama. */
+  remote: boolean;
+}
+
+export function showRequest(model: string): OllamaRequest {
+  return { path: '/api/show', body: { model } };
+}
+
+export function parseShowReply(body: unknown): OllamaModelInfo {
+  const show = body as { capabilities?: string[]; remote_host?: string; remote_model?: string } | null;
+  return { capabilities: show?.capabilities ?? [], remote: Boolean(show?.remote_host || show?.remote_model) };
 }

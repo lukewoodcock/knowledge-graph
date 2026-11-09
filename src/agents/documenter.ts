@@ -1,5 +1,5 @@
 import { Config } from '../config';
-import { chat } from '../ollama';
+import { agentChat } from './chat';
 import { captureFields, setFrontmatterFields, writeNote } from '../vault';
 import { codeNoteName, notePath as notePathIn, safeTitle } from '../vault-format';
 import { CodeCapture, WrittenNote } from '../types';
@@ -47,10 +47,10 @@ Then write:
  * to vault/code/.
  */
 export async function runDocumenter(ctx: CodeCapture, cfg: Config): Promise<WrittenNote> {
-  const content = await chat(cfg.chatEndpoint, cfg.ollamaModel, [
+  const content = await agentChat(cfg, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt(ctx) },
-  ], cfg.ollamaThink);
+  ]);
 
   const title = safeTitle(ctx.filePath || 'unknown');
   const notePath = notePathIn(cfg.vaultPath, 'code', codeNoteName(ctx.today, ctx.project, ctx.filePath));

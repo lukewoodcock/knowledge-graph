@@ -129,6 +129,7 @@ async function runCodeCapture(ctx: CodeCapture, cfg: Config, index: EmbeddingInd
       if (result.status === 'fulfilled') written.push({ agent: agents[i].agent, note: result.value });
       else errors.push(String(result.reason));
     });
+    if (written.length === 0) return { status: 'error', error: errors.join('; ') };
     const notes = written.map(w => w.note);
 
     const tail = await linkAndIndex(notes, { language: ctx.language, description: ctx.description }, errors, cfg, index);

@@ -255,7 +255,52 @@ describe('POST /webhook/knowledge-graph/trigger (end-to-end)', () => {
     const second = await request(app).post('/webhook/knowledge-graph/trigger').send(PAYLOAD);
 
     const runs = await Promise.all([first, second].map(a => waitForRun(app, a.body.status_url)));
-    expect(runs.map(r => r.body.status)).toEqual(['partial', 'partial']);
+    expect(runs.map(r => r.body.status)).toEqual(['error', 'error']);
+  });
+
+  test('a reply cut off by the output limit fails the run, and no half-written note is saved', async () => {
+    mockState.doneReason = 'length';
+
+    const res = await triggerAndWait(createApp(cfg), PAYLOAD);
+
+    expect(res.body.status).toBe('error');
+    expect(res.body.error).toContain('cut off');
+    await expect(fs.readdir(path.join(vaultDir, 'code'))).rejects.toThrow();
+  });
+
+  test('each agent asks with the output limit and the thinking setting', async () => {
+    await triggerAndWait(createApp({ ...cfg, ollamaThink: true }), PAYLOAD);
+
+    expect(mockState.chatBodies[0]).toMatchObject({ think: true, options: { num_predict: 8192 } });
+  });
+
+  test('a key the API echoes back appears in neither the run result nor the log', async () => {
+    const KEY = 'secret-run-key';
+    const rejecting = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `invalid key ${KEY}` }));
+      });
+    });
+    const url = `http://127.0.0.1:${await listen(rejecting)}`;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      const res = await triggerAndWait(
+        createApp({ ...cfg, chatEndpoint: { url, apiKey: KEY }, embedEndpoint: { url, apiKey: KEY } }),
+        PAYLOAD,
+      );
+
+      expect(res.body.status).toBe('error');
+      expect(JSON.stringify(res.body)).not.toContain(KEY);
+      expect(JSON.stringify([...log.mock.calls, ...logError.mock.calls])).not.toContain(KEY);
+    } finally {
+      log.mockRestore();
+      logError.mockRestore();
+      await close(rejecting);
+    }
   });
 
   test('the console logs one line per finished run with its id, status and duration', async () => {

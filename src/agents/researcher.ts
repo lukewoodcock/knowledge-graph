@@ -1,5 +1,5 @@
 import { Config } from '../config';
-import { chat } from '../ollama';
+import { agentChat } from './chat';
 import { captureFields, setFrontmatterFields, writeNote } from '../vault';
 import { notePath as notePathIn, researchNoteName, safeTitle } from '../vault-format';
 import { CodeCapture, WrittenNote } from '../types';
@@ -51,10 +51,10 @@ Then provide:
  * to vault/research/.
  */
 export async function runResearcher(ctx: CodeCapture, cfg: Config): Promise<WrittenNote> {
-  const content = await chat(cfg.chatEndpoint, cfg.ollamaModel, [
+  const content = await agentChat(cfg, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt(ctx) },
-  ], cfg.ollamaThink);
+  ]);
 
   const topic = ctx.description || ctx.filePath;
   const title = safeTitle(topic || 'unknown');

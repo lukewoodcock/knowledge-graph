@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { Config } from '../config';
-import { chat } from '../ollama';
+import { agentChat } from './chat';
 import { parseNote } from '../vault';
 import { linkTargets, noteName, RELATED_LINKS_HEADING, vaultRelative, wikilinkTarget } from '../vault-format';
 import { CHUNK_CHARS, EmbeddingIndex, SearchHit } from '../embedding-index';
@@ -169,10 +169,10 @@ export async function runLinker({ notes, language, description, cfg, index }: Li
     return { agent: 'linker', status: 'success', linksWritten: 0 };
   }
 
-  const raw = await chat(cfg.chatEndpoint, cfg.ollamaModel, [
+  const raw = await agentChat(cfg, [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userPrompt(toLink, language, description) },
-  ], cfg.ollamaThink);
+  ]);
 
   let linksWritten = 0;
   for (const entry of parseLinkMap(raw)) {
