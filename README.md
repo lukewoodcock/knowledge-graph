@@ -201,7 +201,15 @@ If one agent fails, the run degrades gracefully: `status` becomes `"partial"`,
 the surviving note is still written and linked, and an `errors` array explains
 what failed. The same goes for the Linker and indexing, as in a memo run: if
 either fails, the notes are still written and listed, and the run is
-`"partial"`, not an error.
+`"partial"`, not an error. If no agent writes a note, the run is `"error"`.
+
+Every model call has a timeout: 600 s for a chat reply, 60 s for embeddings.
+Node's `fetch` stops waiting for a reply after 300 s regardless, so for now
+that is the real limit on chat, and on `KG_READER_TIMEOUT_MS`.
+Calls that get a 429, a 5xx or a network error are retried up to twice,
+waiting as long as `Retry-After` says (up to a minute). A reply is limited to
+8,192 tokens, and one cut off by that limit is a failure, so a half-written
+note is never saved.
 
 ### Send memos
 
@@ -703,7 +711,8 @@ src/
 ├── server.ts           # Express app: webhook + orchestration (replaces n8n Orchestrator)
 ├── config.ts           # env var loading
 ├── env.ts              # settings helpers shared with the clients: service URL, whole numbers
-├── ollama.ts           # /api/chat and /api/embed clients + response parsing
+├── model-client.ts     # every model call: conversation in, reply out, with timeouts and retries
+├── ollama.ts           # Ollama's request and reply formats
 ├── embedding-index.ts  # notes embedded by section, the index file, search
 ├── requests.ts         # pure validation of memo and search request bodies
 ├── memos.ts            # memo notes and their same-session links

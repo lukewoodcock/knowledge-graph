@@ -1,12 +1,13 @@
 /**
  * The Reader: answers a recall question from the graph with a local Ollama
- * model, so recall needs no cloud model. A small tool loop over Ollama's
- * native /api/chat: the model searches, opens notes and follows links with
- * the same tools the MCP server offers, then answers citing notes as
- * [[name]] (project).
+ * model, so recall needs no cloud model. A small tool loop through the model
+ * client: the model searches, opens notes and follows links with the same
+ * tools the MCP server offers, then answers citing notes as [[name]]
+ * (project).
  */
 import { z } from 'zod';
-import { GRAPH_TOOLS, GRAPH_TOOL_NAMES, REFERENCE_ONLY, callGraphTool, errorMessage, serviceUnreachable } from './graph-tools';
+import { GRAPH_TOOLS, GRAPH_TOOL_NAMES, REFERENCE_ONLY, callGraphTool, serviceUnreachable } from './graph-tools';
+import { Message, ModelError, ToolCall, ToolDefinition, createModelClient, showOllamaModel } from './model-client';
 import { wikilinkTarget } from './vault-format';
 import { isLoopback } from './env';
 
@@ -28,7 +29,7 @@ export interface ReaderStep {
   step: number;
   /** How long the step took, in milliseconds: the model's reply and the tool calls it made. */
   ms: number;
-  toolCalls: Array<{ name: string; arguments: unknown }>;
+  toolCalls: ToolCall[];
 }
 
 export const DEFAULT_MAX_STEPS = 8;
@@ -65,22 +66,11 @@ const ANSWER_NOW =
   'That is all the searching there is time for. Answer now from the notes you have read, citing them; ' +
   "say what the notes don't cover.";
 
-interface ToolCall {
-  function: { name: string; arguments?: unknown };
-}
-
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  tool_calls?: ToolCall[];
-  tool_name?: string;
-}
-
-/** The tools in /api/chat's shape, their parameters as JSON Schema (as the model writes them: defaults optional). */
-const OLLAMA_TOOLS = GRAPH_TOOL_NAMES.map(name => {
+/** The graph tools, their parameters as JSON Schema (as the model writes them: defaults optional). */
+const TOOLS: ToolDefinition[] = GRAPH_TOOL_NAMES.map(name => {
   const { description, inputSchema } = GRAPH_TOOLS[name];
   const { $schema: _, ...parameters } = z.toJSONSchema(z.object(inputSchema), { io: 'input' });
-  return { type: 'function', function: { name, description, parameters } };
+  return { name, description, parameters };
 });
 
 /** Why the Reader can't answer: its message is fit to show the user as it is. */
@@ -99,34 +89,35 @@ export async function ask(question: string, options: ReaderOptions): Promise<Rea
   await checkService(options.serviceUrl);
   await checkModel(options);
 
-  const messages: ChatMessage[] = [
+  const timeoutMs = options.ollamaTimeoutMs ?? DEFAULT_OLLAMA_TIMEOUT_MS;
+  const client = createModelClient({ url: options.ollamaUrl }, { chatTimeoutMs: timeoutMs });
+  const messages: Message[] = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: question },
   ];
   // Name to project of every note the Reader opened with get_note.
   const opened = new Map<string, string | null>();
   const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
+  let toolCallCount = 0;
 
   for (let step = 1; ; step++) {
     // Past the cap, the model gets no tools, so it can only answer.
     const final = step > maxSteps;
     if (final) messages.push({ role: 'user', content: ANSWER_NOW });
     const started = Date.now();
-    const reply = await chat(options, messages, !final);
-    messages.push(reply);
-    const calls = final ? [] : (reply.tool_calls ?? []);
+    const reply = await explainingFailure(options, timeoutMs, () =>
+      client.chat(options.model, messages, final ? undefined : TOOLS),
+    );
+    const calls: ToolCall[] = final ? [] : reply.toolCalls.map(c => ({ ...c, id: `call_${++toolCallCount}` }));
+    messages.push({ role: 'assistant', content: reply.text, toolCalls: calls });
     for (const call of calls) {
-      const result = await callGraphTool(options.serviceUrl, call.function.name, call.function.arguments);
-      if (!result.isError && call.function.name === 'get_note') recordOpened(result.body, opened);
-      messages.push({ role: 'tool', tool_name: call.function.name, content: result.text });
+      const result = await callGraphTool(options.serviceUrl, call.name, call.arguments);
+      if (!result.isError && call.name === 'get_note') recordOpened(result.body, opened);
+      messages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: result.text });
     }
-    options.onStep?.({
-      step,
-      ms: Date.now() - started,
-      toolCalls: calls.map(c => ({ name: c.function.name, arguments: c.function.arguments })),
-    });
+    options.onStep?.({ step, ms: Date.now() - started, toolCalls: calls });
     if (calls.length === 0) {
-      const answer = (reply.content ?? '').trim();
+      const answer = reply.text.trim();
       if (!answer) throw new ReaderError(`${options.model} gave an empty answer. Ask again, or try another model.`);
       return { answer, ...citations(answer, opened) };
     }
@@ -166,60 +157,39 @@ async function checkService(serviceUrl: string): Promise<void> {
 
 /** Asks Ollama about the model: it must be pulled, local, and able to call tools. */
 async function checkModel(options: ReaderOptions): Promise<void> {
-  const { status, body } = await ollama(options, '/api/show', { model: options.model }, CHECK_TIMEOUT_MS);
-  const show = body as { capabilities?: string[]; remote_host?: string; remote_model?: string; error?: string };
-  if (status === 404) {
+  const info = await explainingFailure(options, CHECK_TIMEOUT_MS, () =>
+    showOllamaModel({ url: options.ollamaUrl }, options.model, CHECK_TIMEOUT_MS),
+  );
+  if (!info) {
     throw new ReaderError(`${options.model} is not pulled into Ollama. Pull it with: ollama pull ${options.model}`);
   }
-  if (status !== 200) throw ollamaFailed(show);
-  if (show.remote_host || show.remote_model) throw cloudModel(options.model);
-  if (!show.capabilities?.includes('tools')) {
+  if (info.remote) throw cloudModel(options.model);
+  if (!info.capabilities.includes('tools')) {
     throw new ReaderError(`${options.model} can't call tools, so it can't search the graph. Pick another model.`);
   }
 }
 
-async function chat(options: ReaderOptions, messages: ChatMessage[], withTools: boolean): Promise<ChatMessage> {
-  const request = {
-    model: options.model,
-    stream: false,
-    think: false,
-    messages,
-    ...(withTools && { tools: OLLAMA_TOOLS }),
-  };
-  const timeoutMs = options.ollamaTimeoutMs ?? DEFAULT_OLLAMA_TIMEOUT_MS;
-  const { status, body } = await ollama(options, '/api/chat', request, timeoutMs);
-  const reply = body as { message?: ChatMessage; error?: string };
-  if (status !== 200 || !reply.message) throw ollamaFailed(reply);
-  return reply.message;
-}
-
-/** POSTs to Ollama and returns its status and JSON reply; throws a ReaderError when it can't. */
-async function ollama(
-  options: ReaderOptions,
-  path: string,
-  request: object,
-  timeoutMs: number,
-): Promise<{ status: number; body: unknown }> {
+/** Runs a model call, turning a failure into a ReaderError fit to show the user. */
+async function explainingFailure<T>(options: ReaderOptions, timeoutMs: number, call: () => Promise<T>): Promise<T> {
   try {
-    const res = await fetch(`${options.ollamaUrl}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    return { status: res.status, body: await res.json().catch(() => ({})) };
+    return await call();
   } catch (err) {
-    if (err instanceof Error && err.name === 'TimeoutError') {
-      throw new ReaderError(
-        `${options.model} took longer than ${timeoutMs} ms to reply. Raise KG_READER_TIMEOUT_MS, or try a smaller model.`,
-      );
+    if (!(err instanceof ModelError)) throw err;
+    switch (err.reason) {
+      case 'timeout':
+        throw new ReaderError(
+          err.detail
+            ? `${options.model} did not reply in time: ${err.detail}. Try a smaller model.`
+            : `${options.model} took longer than ${timeoutMs} ms to reply. Raise KG_READER_TIMEOUT_MS, or try a smaller model.`,
+        );
+      case 'unreachable':
+        throw new ReaderError(`Ollama is not reachable at ${options.ollamaUrl}. Is it running? (${err.detail})`);
+      case 'cut-off':
+        throw new ReaderError(`${err.message}. Ask something narrower, or try another model.`);
+      default:
+        throw new ReaderError(`Ollama could not answer: ${err.detail ?? 'no reply'}`);
     }
-    throw new ReaderError(`Ollama is not reachable at ${options.ollamaUrl}. Is it running? (${errorMessage(err)})`);
   }
-}
-
-function ollamaFailed(body: { error?: string }): ReaderError {
-  return new ReaderError(`Ollama could not answer: ${body.error ?? 'no reply'}`);
 }
 
 /**

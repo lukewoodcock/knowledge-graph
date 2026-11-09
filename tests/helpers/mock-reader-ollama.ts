@@ -5,6 +5,8 @@ import { replyToEmbed } from './mock-ollama';
 export interface ScriptedReply {
   toolCalls?: Array<{ name: string; arguments: Record<string, unknown> }>;
   content?: string;
+  /** Ollama's reason for ending the reply: "length" when the output limit cut it off. */
+  doneReason?: string;
 }
 
 export interface MockReaderOllamaState {
@@ -68,7 +70,7 @@ export function createMockReaderOllama(state: MockReaderOllamaState): http.Serve
         message.tool_calls = reply.toolCalls.map(c => ({ function: { name: c.name, arguments: c.arguments } }));
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ model: parsed.model, message, done: true }));
+      res.end(JSON.stringify({ model: parsed.model, message, done: true, done_reason: reply.doneReason ?? 'stop' }));
     });
   });
 }

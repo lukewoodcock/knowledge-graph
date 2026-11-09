@@ -1,5 +1,5 @@
 import { positiveInt, withoutTrailingSlash } from './env';
-import type { OllamaEndpoint } from './ollama';
+import type { ModelEndpoint } from './model-client';
 
 export interface Config {
   /** Address to listen on. Loopback by default, so nothing else on the network can reach the service. */
@@ -7,9 +7,9 @@ export interface Config {
   port: number;
   vaultPath: string;
   /** The Ollama API the Documenter, Researcher and Linker chat with. */
-  chatEndpoint: OllamaEndpoint;
+  chatEndpoint: ModelEndpoint;
   /** The Ollama API that embeds notes and search queries: the chat one unless OLLAMA_EMBED_URL says otherwise. */
-  embedEndpoint: OllamaEndpoint;
+  embedEndpoint: ModelEndpoint;
   ollamaModel: string;
   /** Let thinking models (qwen3, deepseek-r1) reason first. Much slower. */
   ollamaThink: boolean;
@@ -19,6 +19,8 @@ export interface Config {
   researcher: boolean;
   /** Most characters of a note's text the note endpoint (and so get_note) returns; the rest is cut with a marker. */
   noteMaxChars: number;
+  /** Wait before the first retry of a model call, when the API doesn't say. Not a setting: tests shorten it. */
+  retryDelayMs?: number;
 }
 
 /** About 5,000 tokens: room for any note a run writes, while a huge hand-written one can't flood an agent's context. */
@@ -37,7 +39,7 @@ function ollamaEndpoints(env: NodeJS.ProcessEnv): Pick<Config, 'chatEndpoint' | 
   return { chatEndpoint: endpoint(chatUrl, chatKey), embedEndpoint: endpoint(embedUrl, embedKey) };
 }
 
-function endpoint(url: string, apiKey: string | undefined): OllamaEndpoint {
+function endpoint(url: string, apiKey: string | undefined): ModelEndpoint {
   return apiKey ? { url, apiKey } : { url };
 }
 
